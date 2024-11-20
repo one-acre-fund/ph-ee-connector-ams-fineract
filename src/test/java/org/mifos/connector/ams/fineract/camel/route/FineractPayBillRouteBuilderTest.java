@@ -12,12 +12,12 @@ import org.apache.camel.builder.AdviceWith;
 import org.apache.camel.component.mock.MockEndpoint;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.mifos.connector.ams.fineract.FineractConnectorApplicationTest;
+import org.mifos.connector.ams.fineract.FineractConnectorApplicationSetUp;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.annotation.DirtiesContext;
 
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_EACH_TEST_METHOD)
-class FineractPayBillRouteBuilderTest extends FineractConnectorApplicationTest {
+class FineractPayBillRouteBuilderTest extends FineractConnectorApplicationSetUp {
 
     @Autowired
     @JsonIgnore

@@ -13,7 +13,7 @@ import org.json.JSONObject;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.mifos.connector.ams.fineract.FineractConnectorApplicationTest;
+import org.mifos.connector.ams.fineract.FineractConnectorApplicationSetUp;
 import org.mifos.connector.ams.fineract.data.FineractGetValidationResponse;
 import org.mifos.connector.ams.fineract.util.ConnectionUtils;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -21,7 +21,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.test.annotation.DirtiesContext;
 
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_EACH_TEST_METHOD)
-class FineractRouteBuilderTest extends FineractConnectorApplicationTest {
+class FineractRouteBuilderTest extends FineractConnectorApplicationSetUp {
 
     @Autowired
     private CamelContext camelContext;
@@ -251,7 +251,7 @@ class FineractRouteBuilderTest extends FineractConnectorApplicationTest {
         mockAmsConfirmationEndpoint.expectedHeaderReceived(Exchange.HTTP_METHOD, "POST");
         mockAmsConfirmationEndpoint.expectedHeaderReceived("Content-Type", "application/json");
 
-        JSONObject channelRequestObject = getSettlementJsonObject();
+        JSONObject channelRequestObject = getValidationJsonObject();
 
         Exchange exchange = camelContext.getEndpoint("direct:transfer-settlement").createExchange();
         exchange.setProperty(CHANNEL_REQUEST, channelRequestObject);
@@ -610,30 +610,6 @@ class FineractRouteBuilderTest extends FineractConnectorApplicationTest {
     }
 
     private JSONObject getValidationJsonObject() {
-        String chanelRequest = """
-                    {
-                    "payee": {
-                        "partyIdInfo": {
-                            "partyIdType": "FOUNDATIONALID",
-                            "partyIdentifier":"25598208"
-                            }
-                        },
-                    "amount": {
-                        "amount":"42.00",
-                        "currency":"RWF"
-                        },
-                    "payer": {
-                        "partyIdInfo": {
-                            "partyIdType":"MSISDN",
-                            "partyIdentifier":"250788000000"
-                            }
-                        }
-                    }
-                """;
-        return new JSONObject(chanelRequest);
-    }
-
-    private JSONObject getSettlementJsonObject() {
         String chanelRequest = """
                     {
                     "payee": {

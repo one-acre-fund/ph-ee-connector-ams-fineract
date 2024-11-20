@@ -7,4 +7,4 @@ import org.springframework.boot.test.context.SpringBootTest;
 @CamelSpringBootTest
 @EnableAutoConfiguration
 @SpringBootTest
-public class FineractConnectorApplicationTest {}
+public class FineractConnectorApplicationSetUp {}
