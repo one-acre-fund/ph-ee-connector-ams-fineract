@@ -1,5 +1,8 @@
 # Release Notes
 
+## Version 0.0.9
+    * Health checks
+            * [SER-3220] - Update actuator endpoints
 ## Version 0.0.8
     * Paybill flow
             * [SER-2514] - Fix exception when useWorkflowIdAsTransactionId field is in not in the channel request
