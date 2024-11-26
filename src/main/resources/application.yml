@@ -17,6 +17,10 @@ zeebe:
     contactpoint: "localhost:26500"
 
 management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
   endpoint:
     health:
       probes:
