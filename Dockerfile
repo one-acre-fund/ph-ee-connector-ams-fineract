@@ -14,5 +14,6 @@ COPY --from=build /ph-ee-connector-ams-fineract/build/libs/ph-ee-connector-ams-f
 WORKDIR /app
 
 EXPOSE 5000
+EXPOSE 5004
 
 ENTRYPOINT ["java", "-jar", "/app/ph-ee-connector-ams-fineract.jar"]
