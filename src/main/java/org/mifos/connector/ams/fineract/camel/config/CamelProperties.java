@@ -17,5 +17,7 @@ public class CamelProperties {
     public static final String ACCT_HOLDING_INSTITUTION_ID_VARIABLE_NAME = "accountHoldingInstitutionId";
     public static final String ERROR_INFORMATION = "errorInformation";
     public static final String GET_ACCOUNT_DETAILS_FLAG = "getAccountDetails";
+    public static final String VALIDATION_RESPONSE_BODY = "validationResponseBody";
+    public static final String MESSAGE_VARIABLE_NAME = "message";
 
 }

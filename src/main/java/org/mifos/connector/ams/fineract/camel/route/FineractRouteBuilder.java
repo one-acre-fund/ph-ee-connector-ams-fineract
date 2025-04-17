@@ -139,7 +139,8 @@ public class FineractRouteBuilder extends RouteBuilder {
                 .log(LoggingLevel.INFO,
                         "Received Fineract validation response for " + "transaction ${exchangeProperty."
                                 + TRANSACTION_ID
-                                + "} on ${header.Date} with status: ${header.CamelHttpResponseCode}. Body: \n ${body}");
+                                + "} on ${header.Date} with status: ${header.CamelHttpResponseCode}. Body: \n ${body}")
+                .setProperty(VALIDATION_RESPONSE_BODY).simple("${body}");
 
         from("direct:transfer-settlement-base").id("transfer-settlement-base")
                 .log(LoggingLevel.INFO, "## Transfer Settlement route").to("direct:transfer-settlement").choice()
