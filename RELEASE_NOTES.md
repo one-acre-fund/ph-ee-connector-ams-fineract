@@ -1,5 +1,9 @@
 # Release Notes
 
+## Version 0.1.0
+    * Paybill flow
+            * [CP-3303] - Return fineract validation response message
+
 ## Version 0.0.9
     * Health checks
             * [SER-3220] - Update actuator endpoints

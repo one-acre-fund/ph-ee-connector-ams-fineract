@@ -41,6 +41,7 @@ class FineractPayBillRouteBuilderTest extends FineractConnectorApplicationSetUp 
             ex.setProperty("msisdn", "250788000000");
             ex.setProperty(CLIENT_NAME_VARIABLE_NAME, "John Doe");
             ex.setProperty(CUSTOM_DATA_VARIABLE_NAME, "customData");
+            ex.setProperty(VALIDATION_RESPONSE_BODY, "{ \"message\": \"Validation successful\" }");
         });
         given().baseUri("http://0.0.0.0:5093").contentType("application/json").body("{ \"transactionId\": \"123425\" }")
                 .header(ACCT_HOLDING_INSTITUTION_ID_VARIABLE_NAME, "9876").when()
@@ -48,6 +49,25 @@ class FineractPayBillRouteBuilderTest extends FineractConnectorApplicationSetUp 
                 .body("reconciled", equalTo(true)).body("amsName", equalTo("fineract"))
                 .body("clientName", equalTo("John Doe")).body("currency", equalTo("RWF"))
                 .body("customData", equalTo("customData")).body("accountHoldingInstitutionId", equalTo("9876"))
-                .body("msisdn", equalTo("250788000000")).body("transactionId", equalTo(123425));
+                .body("msisdn", equalTo("250788000000")).body("transactionId", equalTo(123425))
+                .body("message", equalTo("Validation successful"));
+    }
+
+    @DisplayName("Test pay bill validation flow when validation fails with default message")
+    @Test
+    void testFailedPayBillValidationReturnsDefaultMessage() throws Exception {
+        AdviceWith.adviceWith(camelContext, "validate-user", routeBuilder -> {
+            routeBuilder.weaveByToUri("direct:transfer-validation-base").replace().to(mockTransferValidationBase);
+        });
+        mockTransferValidationBase.whenAnyExchangeReceived(ex -> {
+            ex.setProperty(TRANSACTION_ID, 123425);
+            ex.setProperty(PARTY_LOOKUP_FAILED, true);
+        });
+        given().baseUri("http://0.0.0.0:5093").contentType("application/json").body("{ \"transactionId\": \"123425\" }")
+                .header(ACCT_HOLDING_INSTITUTION_ID_VARIABLE_NAME, "9876").when()
+                .post("/api/v1/paybill/validate/fineract").then().body("reconciled", equalTo(false))
+                .body("amsName", equalTo("fineract")).body("accountHoldingInstitutionId", equalTo("9876"))
+                .body("transactionId", equalTo(123425))
+                .body("message", equalTo("Error occurred while validating client"));
     }
 }

@@ -3,12 +3,18 @@ package org.mifos.connector.ams.fineract.camel.route;
 import static org.mifos.connector.ams.fineract.camel.config.CamelProperties.ACCT_HOLDING_INSTITUTION_ID_VARIABLE_NAME;
 import static org.mifos.connector.ams.fineract.camel.config.CamelProperties.CLIENT_NAME_VARIABLE_NAME;
 import static org.mifos.connector.ams.fineract.camel.config.CamelProperties.CUSTOM_DATA_VARIABLE_NAME;
+import static org.mifos.connector.ams.fineract.camel.config.CamelProperties.MESSAGE_VARIABLE_NAME;
+import static org.mifos.connector.ams.fineract.camel.config.CamelProperties.VALIDATION_RESPONSE_BODY;
 import static org.mifos.connector.ams.fineract.zeebe.ZeebeVariables.PARTY_LOOKUP_FAILED;
 import static org.mifos.connector.ams.fineract.zeebe.ZeebeVariables.TRANSACTION_ID;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.camel.Exchange;
 import org.apache.camel.LoggingLevel;
 import org.json.JSONObject;
+import org.mifos.connector.ams.fineract.data.FineractValidationResponse;
 import org.mifos.connector.common.camel.ErrorHandlerRouteBuilder;
 import org.springframework.stereotype.Component;
 
@@ -18,7 +24,10 @@ import org.springframework.stereotype.Component;
  */
 @Slf4j
 @Component
+@RequiredArgsConstructor
 public class FineractPayBillRouteBuilder extends ErrorHandlerRouteBuilder {
+
+    private final ObjectMapper mapper;
 
     @Override
     public void configure() {
@@ -46,8 +55,28 @@ public class FineractPayBillRouteBuilder extends ErrorHandlerRouteBuilder {
                     responseObject.put("msisdn", e.getProperty("msisdn"));
                     responseObject.put(CLIENT_NAME_VARIABLE_NAME, e.getProperty(CLIENT_NAME_VARIABLE_NAME));
                     responseObject.put(CUSTOM_DATA_VARIABLE_NAME, e.getProperty(CUSTOM_DATA_VARIABLE_NAME));
+                    String validationResponse = e.getProperty(VALIDATION_RESPONSE_BODY, String.class);
+                    responseObject.put(MESSAGE_VARIABLE_NAME, getValidationResponseMessage(validationResponse));
                     log.debug("response object: {} ", responseObject);
-                    e.getIn().setBody(responseObject.toString());
+                    e.getMessage().setBody(responseObject.toString());
+                    e.getMessage().setHeader(Exchange.HTTP_RESPONSE_CODE, 200);
                 });
+    }
+
+    /**
+     * Extracts the validation response message from the response body.
+     *
+     * @param responseBody
+     *            the response body as a string
+     * @return the validation response message
+     */
+    private String getValidationResponseMessage(String responseBody) {
+        try {
+            FineractValidationResponse response = mapper.readValue(responseBody, FineractValidationResponse.class);
+            return response.message();
+        } catch (Exception e) {
+            log.error("Error parsing validation response body", e);
+            return "Error occurred while validating client";
+        }
     }
 }
