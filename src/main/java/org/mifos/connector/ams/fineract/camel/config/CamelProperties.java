@@ -19,5 +19,6 @@ public class CamelProperties {
     public static final String GET_ACCOUNT_DETAILS_FLAG = "getAccountDetails";
     public static final String VALIDATION_RESPONSE_BODY = "validationResponseBody";
     public static final String MESSAGE_VARIABLE_NAME = "message";
+    public static final String AMS_PAYMENT_RESPONSE = "amsPaymentResponse";
 
 }

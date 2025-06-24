@@ -1,5 +1,9 @@
 # Release Notes
 
+## Version 0.2.0
+    * POS flow
+            * [CP-3559] - Add support for handling both payment validation & confirmation
+
 ## Version 0.1.0
     * Paybill flow
             * [CP-3303] - Return fineract validation response message

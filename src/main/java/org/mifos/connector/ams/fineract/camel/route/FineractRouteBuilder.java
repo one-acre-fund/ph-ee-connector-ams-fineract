@@ -18,8 +18,10 @@ import org.apache.camel.builder.RouteBuilder;
 import org.apache.camel.model.dataformat.JsonLibrary;
 import org.json.JSONArray;
 import org.json.JSONObject;
+import org.mifos.connector.ams.fineract.data.ChannelRequest;
 import org.mifos.connector.ams.fineract.data.FineractConfirmationRequestDto;
 import org.mifos.connector.ams.fineract.data.FineractGetValidationResponse;
+import org.mifos.connector.ams.fineract.data.FineractPaymentRequest;
 import org.mifos.connector.ams.fineract.data.FineractRequestDto;
 import org.mifos.connector.ams.fineract.util.ConnectionUtils;
 import org.springframework.beans.factory.annotation.Value;
@@ -42,6 +44,9 @@ public class FineractRouteBuilder extends RouteBuilder {
     @Value("${fineract.endpoint.client-details}")
     private String clientDetailsEndpoint;
 
+    @Value("${fineract.endpoint.validation-confirmation}")
+    private String validationAndConfirmationEndpoint;
+
     @Value("${ams.timeout}")
     private Integer amsTimeout;
 
@@ -62,6 +67,16 @@ public class FineractRouteBuilder extends RouteBuilder {
             exchange.setProperty(TRANSFER_SETTLEMENT_FAILED, true);
             return exchange.getIn().getBody();
         }).log(LoggingLevel.ERROR, "Exception occurred in route transfer-settlement-base: ${exception.message}")
+                .to("direct:error-handler");
+
+        onException(Exception.class).routeId("transfer-validation-and-settlement-base").handled(true)
+                .setBody(exchange -> {
+                    // processing exception case
+                    exchange.setProperty(TRANSFER_SETTLEMENT_FAILED, true);
+                    return exchange.getIn().getBody();
+                })
+                .log(LoggingLevel.ERROR,
+                        "Exception occurred while handling validation & confirmation: ${exception.message}")
                 .to("direct:error-handler");
 
         from("direct:error-handler").log(LoggingLevel.ERROR, "Error handler route: ${body}");
@@ -230,6 +245,38 @@ public class FineractRouteBuilder extends RouteBuilder {
                         "Received Fineract client details response for " + "transaction ${exchangeProperty."
                                 + TRANSACTION_ID
                                 + "} on ${header.Date} with status: ${header.CamelHttpResponseCode}. Body: ${body}");
+
+        from("direct:transfer-validation-and-settlement-base").id("transfer-validation-and-settlement-base")
+                .setBody(exchangeProperty(CHANNEL_REQUEST)).to("direct:transfer-validation-and-settlement").choice()
+                .when(header(CAMEL_HTTP_RESPONSE_CODE).isEqualTo("200"))
+                .log("Fineract validation & settlement successful for transaction ${exchangeProperty." + EXTERNAL_ID
+                        + "}")
+                .setProperty(TRANSFER_SETTLEMENT_FAILED, constant(false)).otherwise()
+                .log(LoggingLevel.ERROR,
+                        "Fineract validation & settlement unsuccessful for transaction ${exchangeProperty."
+                                + EXTERNAL_ID + "}")
+                .setProperty(TRANSFER_SETTLEMENT_FAILED, constant(true));
+
+        from("direct:transfer-validation-and-settlement").id("transfer-validation-and-settlement").unmarshal()
+                .json(ChannelRequest.class).removeHeader("*").setHeader(Exchange.HTTP_METHOD, constant("POST"))
+                .setHeader("Content-Type", constant("application/json")).setBody(exchange -> {
+                    ChannelRequest channelRequest = exchange.getIn().getBody(ChannelRequest.class);
+                    String transactionId = exchange.getProperty(TRANSACTION_ID, String.class);
+                    String externalId = exchange.getProperty(EXTERNAL_ID, String.class);
+                    FineractPaymentRequest request = FineractPaymentRequest.fromChannelRequest(channelRequest,
+                            externalId, transactionId);
+                    log.info("Fineract validation & confirmation request for transaction {} sent on {}: \n{}",
+                            request.getRemoteTransactionId(), Instant.now(), request);
+                    exchange.setProperty(CHANNEL_REQUEST, channelRequest);
+                    return request;
+                }).marshal().json()
+                .toD(fineractBaseUrl + validationAndConfirmationEndpoint
+                        + "?bridgeEndpoint=true&throwExceptionOnFailure=false&"
+                        + ConnectionUtils.getConnectionTimeoutDsl(amsTimeout))
+                .log("Received Fineract validation & confirmation response for " + "transaction ${exchangeProperty."
+                        + EXTERNAL_ID
+                        + "} on ${header.Date} with status: ${header.CamelHttpResponseCode}. Body: \n ${body}")
+                .setProperty(AMS_PAYMENT_RESPONSE).simple("${body}");
     }
 
     /**
