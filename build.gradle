@@ -12,12 +12,12 @@ description = 'ph-ee-connector-ams-fineract'
 sourceCompatibility = '17'
 
 def camelCoreVersion = '3.20.2'
-def phConnectorCommonVersion = '1.5.1-SNAPSHOT'
+def phConnectorCommonVersion = '1.5.1-gazelle'
 
 repositories {
     mavenCentral()
     maven {
-        url = uri("https://secure-api.oneacrefund.org/s3/artifacts")
+        url = uri("https://mifos.jfrog.io/artifactory/phee-gradle-local")
     }
 }
 
