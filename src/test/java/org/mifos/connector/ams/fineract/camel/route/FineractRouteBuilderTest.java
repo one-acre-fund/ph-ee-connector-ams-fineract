@@ -9,6 +9,7 @@ import org.apache.camel.*;
 import org.apache.camel.builder.AdviceWith;
 import org.apache.camel.component.mock.MockEndpoint;
 import org.apache.camel.model.language.ConstantExpression;
+import org.apache.camel.support.DefaultExchange;
 import org.json.JSONObject;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -60,6 +61,9 @@ class FineractRouteBuilderTest extends FineractConnectorApplicationSetUp {
 
     @Value("${ams.timeout}")
     private Integer amsTimeout;
+
+    @Value("${fineract.endpoint.validation-confirmation}")
+    private String validationAndConfirmationEndpoint;
 
     @BeforeEach
     void setUp() {
@@ -577,6 +581,93 @@ class FineractRouteBuilderTest extends FineractConnectorApplicationSetUp {
         assertTrue(receivedBody.contains("\"RemoteTransactionId\":\"af71cac2-ec74-4bd1-a584-ea7b72d73982\""));
         assertTrue(receivedBody.contains("\"PhoneNumber\":\"250788000000\""));
         assertTrue(receivedBody.contains("\"getAccountDetails\":false"));
+    }
+
+    @Test
+    void testTransferValidationAndSettlement() throws Exception {
+        String fineractPaymentResponse = """
+                {
+                    "status": 200,
+                    "message": "CONFIRMED",
+                    "transactionId": "xyz",
+                    "accountNumber": "25598208",
+                    "externalId": "abc"
+                }
+                """;
+
+        String channelRequest = """
+                {
+                  "payer": {
+                    "partyIdInfo": {
+                      "partyIdType": "VIRTUAL_ACCOUNT_NUMBER",
+                      "partyIdentifier": "33321"
+                    }
+                  },
+                  "payee": {
+                    "partyIdInfo": {
+                      "partyIdType": "FINERACTACCOUNTID",
+                      "partyIdentifier": "1234"
+                    }
+                  },
+                  "amount": {
+                    "amount": 1000,
+                    "currency": "NGN"
+                  },
+                  "transactionType": {
+                    "scenario": "SQUAD"
+                  }
+                }
+                """;
+        AdviceWith.adviceWith(camelContext, "transfer-validation-and-settlement", routeBuilder -> {
+            routeBuilder.weaveByToUri("https://*").replace().process(ex -> {
+                ex.getIn().setBody(fineractPaymentResponse);
+                ex.getIn().setHeader(Exchange.HTTP_RESPONSE_CODE, 200);
+            });
+        });
+        Exchange exchange = new DefaultExchange(camelContext);
+        exchange.getIn().setBody(channelRequest);
+
+        fluentProducerTemplate.to("direct:transfer-validation-and-settlement").withExchange(exchange).send();
+
+        String response = exchange.getProperty(AMS_PAYMENT_RESPONSE, String.class);
+        assertNotNull(response);
+        assertEquals(fineractPaymentResponse, response);
+    }
+
+    @Test
+    void transferValidationAndSettlementBase_whenResponseIs200_setsSettlementFailedToFalse() throws Exception {
+        AdviceWith.adviceWith(camelContext, "transfer-validation-and-settlement-base", routeBuilder -> {
+            routeBuilder.weaveByToUri("direct:transfer-validation-and-settlement").replace().process(ex -> {
+                ex.getIn().setHeader(Exchange.HTTP_RESPONSE_CODE, 200);
+            });
+        });
+        Exchange result = fluentProducerTemplate.to("direct:transfer-validation-and-settlement-base")
+                .withExchange(new DefaultExchange(camelContext)).send();
+        assertFalse(result.getProperty(TRANSFER_SETTLEMENT_FAILED, Boolean.class));
+    }
+
+    @Test
+    void transferValidationAndSettlementBase_whenResponseIsNot200_setsSettlementFailedToTrue() throws Exception {
+        AdviceWith.adviceWith(camelContext, "transfer-validation-and-settlement-base", routeBuilder -> {
+            routeBuilder.weaveByToUri("direct:transfer-validation-and-settlement").replace().process(ex -> {
+                ex.getIn().setHeader(Exchange.HTTP_RESPONSE_CODE, 400);
+            });
+        });
+        Exchange result = fluentProducerTemplate.to("direct:transfer-validation-and-settlement-base")
+                .withExchange(new DefaultExchange(camelContext)).send();
+        assertTrue(result.getProperty(TRANSFER_SETTLEMENT_FAILED, Boolean.class));
+    }
+
+    @Test
+    void transferValidationAndSettlementBase_whenErrorOccurs_setsSettlementFailedToTrue() throws Exception {
+        AdviceWith.adviceWith(camelContext, "transfer-validation-and-settlement-base", routeBuilder -> {
+            routeBuilder.weaveByToUri("direct:transfer-validation-and-settlement").replace().process(ex -> {
+                throw new RuntimeException();
+            });
+        });
+        Exchange result = fluentProducerTemplate.to("direct:transfer-validation-and-settlement-base")
+                .withExchange(new DefaultExchange(camelContext)).send();
+        assertTrue(result.getProperty(TRANSFER_SETTLEMENT_FAILED, Boolean.class));
     }
 
     private JSONObject getValidationPayBillObject() {
