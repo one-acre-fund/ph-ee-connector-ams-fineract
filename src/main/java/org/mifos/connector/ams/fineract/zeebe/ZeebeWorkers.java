@@ -1,5 +1,6 @@
 package org.mifos.connector.ams.fineract.zeebe;
 
+import static org.mifos.connector.ams.fineract.camel.config.CamelProperties.AMS_PAYMENT_RESPONSE;
 import static org.mifos.connector.ams.fineract.camel.config.CamelProperties.CHANNEL_REQUEST;
 import static org.mifos.connector.ams.fineract.zeebe.ZeebeVariables.CONFIRMATION_RECEIVED;
 import static org.mifos.connector.ams.fineract.zeebe.ZeebeVariables.CUSTOM_DATA;
@@ -14,7 +15,9 @@ import static org.mifos.connector.ams.fineract.zeebe.ZeebeVariables.PARTY_LOOKUP
 import static org.mifos.connector.ams.fineract.zeebe.ZeebeVariables.TRANSACTION_FAILED;
 import static org.mifos.connector.ams.fineract.zeebe.ZeebeVariables.TRANSACTION_ID;
 import static org.mifos.connector.ams.fineract.zeebe.ZeebeVariables.TRANSFER_SETTLEMENT_FAILED;
+import static org.mifos.connector.ams.fineract.zeebe.ZeebeVariables.VALIDATION_AND_SETTLEMENT_WORKER_NAME;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.camunda.zeebe.client.ZeebeClient;
 import io.camunda.zeebe.client.api.response.ActivatedJob;
 import java.util.HashMap;
@@ -27,6 +30,8 @@ import org.apache.camel.ProducerTemplate;
 import org.apache.camel.support.DefaultExchange;
 import org.json.JSONArray;
 import org.json.JSONObject;
+import org.mifos.connector.ams.fineract.data.ChannelRequest;
+import org.mifos.connector.ams.fineract.data.FineractPaymentResponse;
 import org.mifos.connector.ams.fineract.util.ConnectionUtils;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -39,6 +44,7 @@ public class ZeebeWorkers {
     private final ZeebeClient zeebeClient;
     private final CamelContext camelContext;
     private final ProducerTemplate producerTemplate;
+    private final ObjectMapper mapper;
 
     // This value determines if an API call to Fineract AMS will be made
     @Value("${ams.local.enabled:false}")
@@ -47,10 +53,12 @@ public class ZeebeWorkers {
     @Value("${zeebe.client.evenly-allocated-max-jobs}")
     private int workerMaxJobs;
 
-    public ZeebeWorkers(ZeebeClient zeebeClient, CamelContext camelContext, ProducerTemplate producerTemplate) {
+    public ZeebeWorkers(ZeebeClient zeebeClient, CamelContext camelContext, ProducerTemplate producerTemplate,
+            ObjectMapper mapper) {
         this.zeebeClient = zeebeClient;
         this.camelContext = camelContext;
         this.producerTemplate = producerTemplate;
+        this.mapper = mapper;
     }
 
     /** Defining workers in charge of calling Fineract validation and confirmation APIs. */
@@ -113,6 +121,33 @@ public class ZeebeWorkers {
 
             zeebeClient.newCompleteCommand(job.getKey()).variables(variables).send();
         }).name(FINERACT_AMS_ZEEBEE_SETTLEMENT_WORKER_NAME).maxJobsActive(workerMaxJobs).open();
+
+        zeebeClient.newWorker().jobType(VALIDATION_AND_SETTLEMENT_WORKER_NAME).handler((client, job) -> {
+
+            logWorkerDetails(job);
+            Map<String, Object> variables;
+            if (isAmsLocalEnabled) {
+                Exchange ex = new DefaultExchange(camelContext);
+                variables = job.getVariablesAsMap();
+                ex.setProperty(CHANNEL_REQUEST, variables.get(CHANNEL_REQUEST));
+                ex.setProperty(TRANSACTION_ID, variables.get(TRANSACTION_ID));
+                ex.setProperty(EXTERNAL_ID, variables.get(EXTERNAL_ID));
+                producerTemplate.send("direct:transfer-validation-and-settlement-base", ex);
+                checkOperationResultAndSetVariables(TRANSFER_SETTLEMENT_FAILED, ex, variables);
+                String amsResponse = ex.getProperty(AMS_PAYMENT_RESPONSE, String.class);
+                FineractPaymentResponse paymentResponse = mapper.readValue(amsResponse, FineractPaymentResponse.class);
+                if (paymentResponse != null && paymentResponse.accountNumber() != null) {
+                    ChannelRequest channelRequest = ex.getProperty(CHANNEL_REQUEST, ChannelRequest.class);
+                    channelRequest.getPayee().getPartyIdInfo().setPartyIdentifier(paymentResponse.accountNumber());
+                    variables.put(CHANNEL_REQUEST, mapper.writeValueAsString(channelRequest));
+                }
+                variables.put(AMS_PAYMENT_RESPONSE, amsResponse);
+            } else {
+                variables = setVariablesForDisabledLocalAms(TRANSFER_SETTLEMENT_FAILED);
+            }
+
+            zeebeClient.newCompleteCommand(job.getKey()).variables(variables).send();
+        }).name(VALIDATION_AND_SETTLEMENT_WORKER_NAME).maxJobsActive(workerMaxJobs).open();
     }
 
     private void logWorkerDetails(ActivatedJob job) {

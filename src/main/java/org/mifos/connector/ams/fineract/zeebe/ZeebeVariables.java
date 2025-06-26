@@ -18,4 +18,5 @@ public class ZeebeVariables {
     public static final String FINERACT_AMS_ZEEBEE_SETTLEMENT_WORKER_NAME = "transfer-settlement-fineract";
     public static final String CUSTOM_DATA = "customData";
     public static final String CONFIRMATION_RECEIVED = "confirmationReceived";
+    public static final String VALIDATION_AND_SETTLEMENT_WORKER_NAME = "transfer-validation-and-settlement-fineract";
 }
