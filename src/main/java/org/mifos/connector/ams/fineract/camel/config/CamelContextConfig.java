@@ -70,7 +70,8 @@ public class CamelContextConfig {
      */
     private void configureHttpComponent(CamelContext camelContext, String scheme) {
         HttpComponent httpComponent = camelContext.getComponent(scheme, HttpComponent.class);
-        String userAgent = String.format("%s/%s", applicationName, buildProperties.getVersion());
+        String userAgent = String.format("%s/%s", applicationName,
+                buildProperties != null ? buildProperties.getVersion() : " ");
         httpComponent.setHttpClientConfigurer(clientBuilder -> clientBuilder.setUserAgent(userAgent));
     }
 }
