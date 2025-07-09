@@ -2,7 +2,7 @@
 
 ## Version 0.2.1
     * Fineract AMS connector
-            * [CP-3648] - Implement a clear user agent
+            * [CP-3648] - Configure explicit user-agent header for all HTTP/HTTPS calls
 
 ## Version 0.2.0
     * POS flow
