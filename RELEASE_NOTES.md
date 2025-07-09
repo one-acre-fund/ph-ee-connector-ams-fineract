@@ -1,5 +1,9 @@
 # Release Notes
 
+## Version 0.2.1
+    * Fineract AMS connector
+            * [CP-3648] -  Implement a clear user agent
+
 ## Version 0.2.0
     * POS flow
             * [CP-3559] - Add support for handling both payment validation & confirmation
