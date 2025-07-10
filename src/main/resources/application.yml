@@ -42,3 +42,7 @@ fineract:
     confirmation: /paymentHub/confirmation
     client-details: /payments/validations
     validation-confirmation: /paymentHub/payments
+
+spring:
+  application:
+    name: ph-ee-connector-ams-fineract

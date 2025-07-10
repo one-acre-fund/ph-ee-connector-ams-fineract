@@ -8,7 +8,7 @@ plugins {
 }
 
 group = 'org.mifos'
-version = '0.2.0'
+version = '0.2.1'
 description = 'ph-ee-connector-ams-fineract'
 sourceCompatibility = '17'
 
@@ -54,7 +54,9 @@ dependencies {
             'org.projectlombok:lombok',
             )
 }
-
+springBoot {
+    buildInfo()
+}
 allprojects {
     apply plugin: 'com.diffplug.spotless'
 
