@@ -43,8 +43,8 @@ public class FineractPaymentRequest extends FineractRequestDto {
         FineractPaymentRequest request = new FineractPaymentRequest();
         request.setRemoteTransactionId(transactionId);
         request.setReceiptId(receiptId);
-        request.setPhoneNumber(channelRequest.getPayer().getPartyIdInfo().getPartyIdentifier());
-        request.setAccount(channelRequest.getPayee().getPartyIdInfo().getPartyIdentifier());
+        request.setAccount(channelRequest.getPayer().getPartyIdInfo().getPartyIdentifier());
+        request.setPhoneNumber(channelRequest.getPayee().getPartyIdInfo().getPartyIdentifier());
         request.setAmount(channelRequest.getAmount().getAmount());
         request.setCurrency(channelRequest.getAmount().getCurrency());
         request.setAccountProvider(channelRequest.getTransactionType().getScenario());
