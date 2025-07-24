@@ -1,5 +1,9 @@
 # Release Notes
 
+## Version 0.2.2
+    * POS flow
+            * [CP-3733] - Fix Client Not Found Error When Making Fineract Virtual Payments
+
 ## Version 0.2.1
     * Fineract AMS connector
             * [CP-3648] - Configure explicit user-agent header for all HTTP/HTTPS calls

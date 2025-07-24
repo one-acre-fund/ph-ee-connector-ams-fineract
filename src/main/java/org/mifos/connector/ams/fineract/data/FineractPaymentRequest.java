@@ -28,7 +28,8 @@ public class FineractPaymentRequest extends FineractRequestDto {
     }
 
     /**
-     * Creates a {@link FineractPaymentRequest} from a {@link ChannelRequest}.
+     * Creates a {@link FineractPaymentRequest} from a {@link ChannelRequest}. This method is specifically designed for
+     * virtual accounts transactions where the actual Fineract account isn't yet known.
      *
      * @param channelRequest
      *            {@link ChannelRequest}
@@ -38,13 +39,14 @@ public class FineractPaymentRequest extends FineractRequestDto {
      *            the receipt ID of the request
      * @return a {@link FineractPaymentRequest} object populated with data from the channel request
      */
-    public static FineractPaymentRequest fromChannelRequest(ChannelRequest channelRequest, String transactionId,
-            String receiptId) {
+    public static FineractPaymentRequest fromChannelRequestForVirtualAccounts(ChannelRequest channelRequest,
+            String transactionId, String receiptId) {
         FineractPaymentRequest request = new FineractPaymentRequest();
         request.setRemoteTransactionId(transactionId);
         request.setReceiptId(receiptId);
-        request.setPhoneNumber(channelRequest.getPayer().getPartyIdInfo().getPartyIdentifier());
-        request.setAccount(channelRequest.getPayee().getPartyIdInfo().getPartyIdentifier());
+        // Use the virtual account in place of the actual fineract account
+        request.setAccount(channelRequest.getPayer().getPartyIdInfo().getPartyIdentifier());
+        request.setPhoneNumber(channelRequest.getPayee().getPartyIdInfo().getPartyIdentifier());
         request.setAmount(channelRequest.getAmount().getAmount());
         request.setCurrency(channelRequest.getAmount().getCurrency());
         request.setAccountProvider(channelRequest.getTransactionType().getScenario());
