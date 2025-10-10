@@ -79,6 +79,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    image: oaftech.azurecr.io/oneacrefund/ph-ee-connector-ams-fineract:${MESSAGE_GATEWAY_IMAGE_TAG}
     ports:
       - "5004:5000"
     environment:

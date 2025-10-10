@@ -1,5 +1,9 @@
 # Release Notes
 
+## Version 0.2.3
+    * Miscellaneous
+            * [CP-3289] - Swith CI build to GitHub Actions
+
 ## Version 0.2.2
     * POS flow
             * [CP-3733] - Fix Client Not Found Error When Making Fineract Virtual Payments
