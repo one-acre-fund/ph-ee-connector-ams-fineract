@@ -1,5 +1,9 @@
 # Release Notes
 
+## Version 0.2.4
+    * POS flow
+            * [CP-3940] - Have the squad External ID as the receipt number on fineract
+
 ## Version 0.2.3
     * Miscellaneous
             * [CP-3289] - Swith CI build to GitHub Actions

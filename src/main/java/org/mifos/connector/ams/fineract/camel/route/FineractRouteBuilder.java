@@ -264,7 +264,7 @@ public class FineractRouteBuilder extends RouteBuilder {
                     String transactionId = exchange.getProperty(TRANSACTION_ID, String.class);
                     String externalId = exchange.getProperty(EXTERNAL_ID, String.class);
                     FineractPaymentRequest request = FineractPaymentRequest
-                            .fromChannelRequestForVirtualAccounts(channelRequest, externalId, transactionId);
+                            .fromChannelRequestForVirtualAccounts(channelRequest, transactionId, externalId);
                     log.info("Fineract validation & confirmation request for transaction {} sent on {}: \n{}",
                             request.getRemoteTransactionId(), Instant.now(), request);
                     exchange.setProperty(CHANNEL_REQUEST, channelRequest);
