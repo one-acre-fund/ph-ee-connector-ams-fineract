@@ -1,5 +1,9 @@
 # Release Notes
 
+## Version 0.2.5
+    * OpenTelemetry
+            * [CP-3980] - Integrate Elastic APM with PH
+
 ## Version 0.2.4
     * POS flow
             * [CP-3940] - Have the squad External ID as the receipt number on fineract
