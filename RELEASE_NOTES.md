@@ -1,7 +1,7 @@
 # Release Notes
 
 ## Version 0.2.5
-    * OpenTelemetry
+    * Observability
             * [CP-3980] - Integrate Elastic APM with PH
 
 ## Version 0.2.4
