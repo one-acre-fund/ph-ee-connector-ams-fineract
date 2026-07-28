@@ -20,6 +20,7 @@ import static org.mifos.connector.ams.fineract.zeebe.ZeebeVariables.VALIDATION_A
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.camunda.zeebe.client.ZeebeClient;
 import io.camunda.zeebe.client.api.response.ActivatedJob;
+import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
 import javax.annotation.PostConstruct;
@@ -52,6 +53,9 @@ public class ZeebeWorkers {
 
     @Value("${zeebe.client.evenly-allocated-max-jobs}")
     private int workerMaxJobs;
+
+    @Value("${zeebe.client.request-timeout}")
+    private Duration requestTimeout;
 
     public ZeebeWorkers(ZeebeClient zeebeClient, CamelContext camelContext, ProducerTemplate producerTemplate,
             ObjectMapper mapper) {
@@ -90,7 +94,7 @@ public class ZeebeWorkers {
             } else {
                 variables = setVariablesForDisabledLocalAms(PARTY_LOOKUP_FAILED);
             }
-            zeebeClient.newCompleteCommand(job.getKey()).variables(variables).send();
+            ZeebeCommandHelper.completeJob(client, job, variables, requestTimeout, log);
         }).name(FINERACT_AMS_ZEEBEE_VALIDATION_WORKER_NAME).maxJobsActive(workerMaxJobs).open();
 
         // Defining worker in charge of calling Fineract confirmation API
@@ -119,7 +123,7 @@ public class ZeebeWorkers {
                 variables = setVariablesForDisabledLocalAms(TRANSFER_SETTLEMENT_FAILED);
             }
 
-            zeebeClient.newCompleteCommand(job.getKey()).variables(variables).send();
+            ZeebeCommandHelper.completeJob(client, job, variables, requestTimeout, log);
         }).name(FINERACT_AMS_ZEEBEE_SETTLEMENT_WORKER_NAME).maxJobsActive(workerMaxJobs).open();
 
         zeebeClient.newWorker().jobType(VALIDATION_AND_SETTLEMENT_WORKER_NAME).handler((client, job) -> {
@@ -146,7 +150,7 @@ public class ZeebeWorkers {
                 variables = setVariablesForDisabledLocalAms(TRANSFER_SETTLEMENT_FAILED);
             }
 
-            zeebeClient.newCompleteCommand(job.getKey()).variables(variables).send();
+            ZeebeCommandHelper.completeJob(client, job, variables, requestTimeout, log);
         }).name(VALIDATION_AND_SETTLEMENT_WORKER_NAME).maxJobsActive(workerMaxJobs).open();
     }
 

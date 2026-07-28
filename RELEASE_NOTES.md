@@ -1,5 +1,9 @@
 # Release Notes
 
+## Version 0.2.6
+    * Zeebe connectivity
+        * [FD-1882] - Add a timeout and keep alive on zeebe to resolve job workers becoming stuck
+
 ## Version 0.2.5
     * Observability
             * [CP-3980] - Integrate Elastic APM with PH
