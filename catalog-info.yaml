@@ -1,0 +1,46 @@
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: ph-ee-connector-ams-fineract
+  title: PH AMS Fineract Connector
+  description: Zeebe AMS connector integrating with Apache Fineract for account management and loan repayment posting
+  annotations:
+    github.com/project-slug: one-acre-fund/ph-ee-connector-ams-fineract
+    backstage.io/kubernetes-id: ph-ee-connector-ams-fineract
+    sonarqube.org/project-key: one-acre-fund_ph-ee-connector-ams-fineract
+    backstage.io/code-coverage: sonarqube
+  tags:
+    - java
+    - zeebe-connector
+    - payment-hub
+    - paymenthub
+    - fineract
+    - ams
+  links:
+    - url: https://sonarcloud.io/summary/new_code?id=one-acre-fund_ph-ee-connector-ams-fineract
+      title: Code Quality Dashboard
+      icon: dashboard
+    - url: https://ph-web.oneacrefund.org
+      title: Production Environment
+      icon: globe
+    - url: https://elastic.oneacrefund.org/app/apm/services/ph-ee-connector-ams-fineract
+      title: Elastic APM Dashboard
+      icon: globe
+    - url: https://elastic.oneacrefund.org/app/r/s/TTuPi
+      title: Application logs
+      icon: globe
+    - url: https://elastic.oneacrefund.org/app/r/s/CgjiD
+      title: Kong Ingress logs
+      icon: globe
+    - url: https://github.com/one-acre-fund/ph-ee-connector-ams-fineract/blob/main/.github/workflows/build.yaml
+      title: Build Pipeline
+      icon: build
+spec:
+  type: worker
+  lifecycle: production
+  owner: group:one-acre-fund/credits-and-payments
+  system: connectors
+  consumesApis:
+    - zeebe-gateway-grpc-api
+  dependsOn:
+    - resource:default/zeebe-cluster
