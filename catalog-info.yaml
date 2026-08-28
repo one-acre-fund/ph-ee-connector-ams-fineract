@@ -37,7 +37,7 @@ metadata:
       title: Build Pipeline
       icon: build
 spec:
-  type: worker
+  type: service
   lifecycle: production
   owner: group:default/credits-and-payments
   system: connectors
