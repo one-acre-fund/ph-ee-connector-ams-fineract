@@ -22,11 +22,13 @@ import org.springframework.stereotype.Component;
 /**
  * Drains the Zeebe job workers when the pod is asked to stop (FD-1939).
  *
+ * <p>
  * Spring destroys the {@code ZeebeClient} bean at the very end of a shutdown, and its close() interrupts every job
  * handler that is still running. A handler interrupted between the payment API call and the complete-job command leaves
  * the job activated at the broker; it is re-offered to another pod after the job timeout, which repeats the payment
  * call.
  *
+ * <p>
  * This component runs first on ContextClosedEvent, before Camel, Tomcat and any bean destruction: it closes every
  * registered worker so no new jobs are activated for this pod, hands back any job that still arrives from a poll
  * already on the wire (unchanged retries, so the broker re-offers it at once), and waits until every handler that was
@@ -97,9 +99,8 @@ public class ZeebeWorkerDrain implements ApplicationListener<ContextClosedEvent>
         long waitedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
         int left = inFlight.get();
         if (left > 0) {
-            logger.error(
-                    "shutdown: {} Zeebe jobs still in flight after {} ms, the broker will retry them after the job timeout",
-                    left, waitedMs);
+            logger.error("shutdown: {} Zeebe jobs still in flight after {} ms, "
+                    + "the broker will retry them after the job timeout", left, waitedMs);
         } else {
             logger.info("shutdown: all Zeebe jobs drained after {} ms", waitedMs);
         }
