@@ -23,7 +23,6 @@ import io.camunda.zeebe.client.api.response.ActivatedJob;
 import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
-import javax.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.camel.CamelContext;
 import org.apache.camel.Exchange;
@@ -35,6 +34,8 @@ import org.mifos.connector.ams.fineract.data.ChannelRequest;
 import org.mifos.connector.ams.fineract.data.FineractPaymentResponse;
 import org.mifos.connector.ams.fineract.util.ConnectionUtils;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 
 /** Contains workers that will run based on the BPMN flow. */
@@ -43,6 +44,7 @@ import org.springframework.stereotype.Component;
 public class ZeebeWorkers {
 
     private final ZeebeClient zeebeClient;
+    private final ZeebeWorkerDrain drain;
     private final CamelContext camelContext;
     private final ProducerTemplate producerTemplate;
     private final ObjectMapper mapper;
@@ -58,7 +60,8 @@ public class ZeebeWorkers {
     private Duration requestTimeout;
 
     public ZeebeWorkers(ZeebeClient zeebeClient, CamelContext camelContext, ProducerTemplate producerTemplate,
-            ObjectMapper mapper) {
+            ObjectMapper mapper, ZeebeWorkerDrain drain) {
+        this.drain = drain;
         this.zeebeClient = zeebeClient;
         this.camelContext = camelContext;
         this.producerTemplate = producerTemplate;
@@ -66,92 +69,100 @@ public class ZeebeWorkers {
     }
 
     /** Defining workers in charge of calling Fineract validation and confirmation APIs. */
-    @PostConstruct
+    // Workers open only once the application is ready, after Camel and the web server have
+    // started. Opened earlier, a starting pod activates jobs it cannot process yet, and a pod
+    // replaced during startup would hold them until the broker job timeout (FD-1939).
+    @EventListener(ApplicationReadyEvent.class)
     public void setupWorkers() {
         // Defining worker in charge of calling Fineract validation API
-        zeebeClient.newWorker().jobType(FINERACT_AMS_ZEEBEE_VALIDATION_WORKER_NAME).handler((client, job) -> {
-            logWorkerDetails(job);
+        drain.register(zeebeClient.newWorker().jobType(FINERACT_AMS_ZEEBEE_VALIDATION_WORKER_NAME)
+                .handler(drain.track((client, job) -> {
+                    logWorkerDetails(job);
 
-            Map<String, Object> variables;
+                    Map<String, Object> variables;
 
-            if (isAmsLocalEnabled) {
-                Exchange ex = new DefaultExchange(camelContext);
+                    if (isAmsLocalEnabled) {
+                        Exchange ex = new DefaultExchange(camelContext);
 
-                variables = job.getVariablesAsMap();
+                        variables = job.getVariablesAsMap();
 
-                JSONObject channelRequest = new JSONObject((String) variables.get(CHANNEL_REQUEST));
-                ex.setProperty(CHANNEL_REQUEST, channelRequest);
-                ex.setProperty(TRANSACTION_ID, variables.get(TRANSACTION_ID));
-                String customDataString = (String) variables.get(CUSTOM_DATA);
-                if (customDataString != null && !customDataString.isBlank()) {
-                    JSONArray customData = new JSONArray(customDataString);
-                    ex.setProperty(CUSTOM_DATA, customData);
-                }
-                producerTemplate.send("direct:transfer-validation-base", ex);
+                        JSONObject channelRequest = new JSONObject((String) variables.get(CHANNEL_REQUEST));
+                        ex.setProperty(CHANNEL_REQUEST, channelRequest);
+                        ex.setProperty(TRANSACTION_ID, variables.get(TRANSACTION_ID));
+                        String customDataString = (String) variables.get(CUSTOM_DATA);
+                        if (customDataString != null && !customDataString.isBlank()) {
+                            JSONArray customData = new JSONArray(customDataString);
+                            ex.setProperty(CUSTOM_DATA, customData);
+                        }
+                        producerTemplate.send("direct:transfer-validation-base", ex);
 
-                checkOperationResultAndSetVariables(PARTY_LOOKUP_FAILED, ex, variables);
+                        checkOperationResultAndSetVariables(PARTY_LOOKUP_FAILED, ex, variables);
 
-            } else {
-                variables = setVariablesForDisabledLocalAms(PARTY_LOOKUP_FAILED);
-            }
-            ZeebeCommandHelper.completeJob(client, job, variables, requestTimeout, log);
-        }).name(FINERACT_AMS_ZEEBEE_VALIDATION_WORKER_NAME).maxJobsActive(workerMaxJobs).open();
+                    } else {
+                        variables = setVariablesForDisabledLocalAms(PARTY_LOOKUP_FAILED);
+                    }
+                    ZeebeCommandHelper.completeJob(client, job, variables, requestTimeout, log);
+                })).name(FINERACT_AMS_ZEEBEE_VALIDATION_WORKER_NAME).maxJobsActive(workerMaxJobs).open());
 
         // Defining worker in charge of calling Fineract confirmation API
-        zeebeClient.newWorker().jobType(FINERACT_AMS_ZEEBEE_SETTLEMENT_WORKER_NAME).handler((client, job) -> {
-            logWorkerDetails(job);
+        drain.register(zeebeClient.newWorker().jobType(FINERACT_AMS_ZEEBEE_SETTLEMENT_WORKER_NAME)
+                .handler(drain.track((client, job) -> {
+                    logWorkerDetails(job);
 
-            Map<String, Object> variables;
+                    Map<String, Object> variables;
 
-            if (isAmsLocalEnabled) {
-                Exchange ex = new DefaultExchange(camelContext);
-                variables = job.getVariablesAsMap();
-                JSONObject channelRequest = new JSONObject((String) variables.get(CHANNEL_REQUEST));
-                ex.setProperty(CHANNEL_REQUEST, channelRequest);
-                ex.setProperty(TRANSACTION_ID, variables.get(TRANSACTION_ID));
-                ex.setProperty(EXTERNAL_ID, variables.get(EXTERNAL_ID));
-                ex.setProperty(TRANSACTION_FAILED, variables.get(TRANSACTION_FAILED));
-                ex.setProperty(ERROR_DESCRIPTION, variables.get(ERROR_DESCRIPTION));
-                ex.setProperty(GET_TRANSACTION_STATUS_RESPONSE_CODE,
-                        variables.get(GET_TRANSACTION_STATUS_RESPONSE_CODE));
-                ex.setProperty(CONFIRMATION_RECEIVED, variables.get(CONFIRMATION_RECEIVED));
+                    if (isAmsLocalEnabled) {
+                        Exchange ex = new DefaultExchange(camelContext);
+                        variables = job.getVariablesAsMap();
+                        JSONObject channelRequest = new JSONObject((String) variables.get(CHANNEL_REQUEST));
+                        ex.setProperty(CHANNEL_REQUEST, channelRequest);
+                        ex.setProperty(TRANSACTION_ID, variables.get(TRANSACTION_ID));
+                        ex.setProperty(EXTERNAL_ID, variables.get(EXTERNAL_ID));
+                        ex.setProperty(TRANSACTION_FAILED, variables.get(TRANSACTION_FAILED));
+                        ex.setProperty(ERROR_DESCRIPTION, variables.get(ERROR_DESCRIPTION));
+                        ex.setProperty(GET_TRANSACTION_STATUS_RESPONSE_CODE,
+                                variables.get(GET_TRANSACTION_STATUS_RESPONSE_CODE));
+                        ex.setProperty(CONFIRMATION_RECEIVED, variables.get(CONFIRMATION_RECEIVED));
 
-                producerTemplate.send("direct:transfer-settlement-base", ex);
+                        producerTemplate.send("direct:transfer-settlement-base", ex);
 
-                checkOperationResultAndSetVariables(TRANSFER_SETTLEMENT_FAILED, ex, variables);
-            } else {
-                variables = setVariablesForDisabledLocalAms(TRANSFER_SETTLEMENT_FAILED);
-            }
+                        checkOperationResultAndSetVariables(TRANSFER_SETTLEMENT_FAILED, ex, variables);
+                    } else {
+                        variables = setVariablesForDisabledLocalAms(TRANSFER_SETTLEMENT_FAILED);
+                    }
 
-            ZeebeCommandHelper.completeJob(client, job, variables, requestTimeout, log);
-        }).name(FINERACT_AMS_ZEEBEE_SETTLEMENT_WORKER_NAME).maxJobsActive(workerMaxJobs).open();
+                    ZeebeCommandHelper.completeJob(client, job, variables, requestTimeout, log);
+                })).name(FINERACT_AMS_ZEEBEE_SETTLEMENT_WORKER_NAME).maxJobsActive(workerMaxJobs).open());
 
-        zeebeClient.newWorker().jobType(VALIDATION_AND_SETTLEMENT_WORKER_NAME).handler((client, job) -> {
+        drain.register(zeebeClient.newWorker().jobType(VALIDATION_AND_SETTLEMENT_WORKER_NAME)
+                .handler(drain.track((client, job) -> {
 
-            logWorkerDetails(job);
-            Map<String, Object> variables;
-            if (isAmsLocalEnabled) {
-                Exchange ex = new DefaultExchange(camelContext);
-                variables = job.getVariablesAsMap();
-                ex.setProperty(CHANNEL_REQUEST, variables.get(CHANNEL_REQUEST));
-                ex.setProperty(TRANSACTION_ID, variables.get(TRANSACTION_ID));
-                ex.setProperty(EXTERNAL_ID, variables.get(EXTERNAL_ID));
-                producerTemplate.send("direct:transfer-validation-and-settlement-base", ex);
-                checkOperationResultAndSetVariables(TRANSFER_SETTLEMENT_FAILED, ex, variables);
-                String amsResponse = ex.getProperty(AMS_PAYMENT_RESPONSE, String.class);
-                FineractPaymentResponse paymentResponse = mapper.readValue(amsResponse, FineractPaymentResponse.class);
-                if (paymentResponse != null && paymentResponse.accountNumber() != null) {
-                    ChannelRequest channelRequest = ex.getProperty(CHANNEL_REQUEST, ChannelRequest.class);
-                    channelRequest.getPayee().getPartyIdInfo().setPartyIdentifier(paymentResponse.accountNumber());
-                    variables.put(CHANNEL_REQUEST, mapper.writeValueAsString(channelRequest));
-                }
-                variables.put(AMS_PAYMENT_RESPONSE, amsResponse);
-            } else {
-                variables = setVariablesForDisabledLocalAms(TRANSFER_SETTLEMENT_FAILED);
-            }
+                    logWorkerDetails(job);
+                    Map<String, Object> variables;
+                    if (isAmsLocalEnabled) {
+                        Exchange ex = new DefaultExchange(camelContext);
+                        variables = job.getVariablesAsMap();
+                        ex.setProperty(CHANNEL_REQUEST, variables.get(CHANNEL_REQUEST));
+                        ex.setProperty(TRANSACTION_ID, variables.get(TRANSACTION_ID));
+                        ex.setProperty(EXTERNAL_ID, variables.get(EXTERNAL_ID));
+                        producerTemplate.send("direct:transfer-validation-and-settlement-base", ex);
+                        checkOperationResultAndSetVariables(TRANSFER_SETTLEMENT_FAILED, ex, variables);
+                        String amsResponse = ex.getProperty(AMS_PAYMENT_RESPONSE, String.class);
+                        FineractPaymentResponse paymentResponse = mapper.readValue(amsResponse,
+                                FineractPaymentResponse.class);
+                        if (paymentResponse != null && paymentResponse.accountNumber() != null) {
+                            ChannelRequest channelRequest = ex.getProperty(CHANNEL_REQUEST, ChannelRequest.class);
+                            channelRequest.getPayee().getPartyIdInfo()
+                                    .setPartyIdentifier(paymentResponse.accountNumber());
+                            variables.put(CHANNEL_REQUEST, mapper.writeValueAsString(channelRequest));
+                        }
+                        variables.put(AMS_PAYMENT_RESPONSE, amsResponse);
+                    } else {
+                        variables = setVariablesForDisabledLocalAms(TRANSFER_SETTLEMENT_FAILED);
+                    }
 
-            ZeebeCommandHelper.completeJob(client, job, variables, requestTimeout, log);
-        }).name(VALIDATION_AND_SETTLEMENT_WORKER_NAME).maxJobsActive(workerMaxJobs).open();
+                    ZeebeCommandHelper.completeJob(client, job, variables, requestTimeout, log);
+                })).name(VALIDATION_AND_SETTLEMENT_WORKER_NAME).maxJobsActive(workerMaxJobs).open());
     }
 
     private void logWorkerDetails(ActivatedJob job) {

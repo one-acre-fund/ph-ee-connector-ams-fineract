@@ -173,7 +173,8 @@ class ZeebeWorkersTest {
     }
 
     private ZeebeWorkers newWorkers(boolean amsLocalEnabled) {
-        ZeebeWorkers workers = new ZeebeWorkers(zeebeClient, camelContext, producerTemplate, new ObjectMapper());
+        ZeebeWorkers workers = new ZeebeWorkers(zeebeClient, camelContext, producerTemplate, new ObjectMapper(),
+                new ZeebeWorkerDrain(Duration.ofSeconds(5), Duration.ofSeconds(5)));
         ReflectionTestUtils.setField(workers, "isAmsLocalEnabled", amsLocalEnabled);
         ReflectionTestUtils.setField(workers, "workerMaxJobs", WORKER_MAX_JOBS);
         ReflectionTestUtils.setField(workers, "requestTimeout", REQUEST_TIMEOUT);
