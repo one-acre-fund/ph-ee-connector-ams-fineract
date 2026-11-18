@@ -99,13 +99,4 @@ class ConnectionUtilsTest {
         assertEquals("Internal Server Error", result);
     }
 
-    @DisplayName("Returns a valid DSL string when a positive timeout is provided")
-    @Test
-    void test_positive_timeout() {
-        int timeout = 5000;
-        String expectedDsl = "httpClient.connectTimeout=5000&httpClient.connectionRequestTimeout=5000&httpClient.socketTimeout=5000";
-        String actualDsl = ConnectionUtils.getConnectionTimeoutDsl(timeout);
-        assertEquals(expectedDsl, actualDsl);
-    }
-
 }

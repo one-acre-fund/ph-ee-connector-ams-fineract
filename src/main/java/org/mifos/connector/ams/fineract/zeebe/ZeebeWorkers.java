@@ -32,6 +32,7 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 import org.mifos.connector.ams.fineract.data.ChannelRequest;
 import org.mifos.connector.ams.fineract.data.FineractPaymentResponse;
+import org.mifos.connector.ams.fineract.resilience.FineractHttpCaller;
 import org.mifos.connector.ams.fineract.util.ConnectionUtils;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
@@ -94,6 +95,7 @@ public class ZeebeWorkers {
                             JSONArray customData = new JSONArray(customDataString);
                             ex.setProperty(CUSTOM_DATA, customData);
                         }
+                        ex.setProperty(FineractHttpCaller.JOB_DEADLINE, job.getDeadline());
                         producerTemplate.send("direct:transfer-validation-base", ex);
 
                         checkOperationResultAndSetVariables(PARTY_LOOKUP_FAILED, ex, variables);
@@ -123,6 +125,7 @@ public class ZeebeWorkers {
                         ex.setProperty(GET_TRANSACTION_STATUS_RESPONSE_CODE,
                                 variables.get(GET_TRANSACTION_STATUS_RESPONSE_CODE));
                         ex.setProperty(CONFIRMATION_RECEIVED, variables.get(CONFIRMATION_RECEIVED));
+                        ex.setProperty(FineractHttpCaller.JOB_DEADLINE, job.getDeadline());
 
                         producerTemplate.send("direct:transfer-settlement-base", ex);
 
@@ -145,11 +148,14 @@ public class ZeebeWorkers {
                         ex.setProperty(CHANNEL_REQUEST, variables.get(CHANNEL_REQUEST));
                         ex.setProperty(TRANSACTION_ID, variables.get(TRANSACTION_ID));
                         ex.setProperty(EXTERNAL_ID, variables.get(EXTERNAL_ID));
+                        ex.setProperty(FineractHttpCaller.JOB_DEADLINE, job.getDeadline());
                         producerTemplate.send("direct:transfer-validation-and-settlement-base", ex);
                         checkOperationResultAndSetVariables(TRANSFER_SETTLEMENT_FAILED, ex, variables);
                         String amsResponse = ex.getProperty(AMS_PAYMENT_RESPONSE, String.class);
-                        FineractPaymentResponse paymentResponse = mapper.readValue(amsResponse,
-                                FineractPaymentResponse.class);
+                        // No response (connection failed, circuit open, timeout) leaves nothing to parse; the step is
+                        // already failed and the job must still complete, not fail and be re-offered.
+                        FineractPaymentResponse paymentResponse = amsResponse == null || amsResponse.isBlank() ? null
+                                : mapper.readValue(amsResponse, FineractPaymentResponse.class);
                         if (paymentResponse != null && paymentResponse.accountNumber() != null) {
                             ChannelRequest channelRequest = ex.getProperty(CHANNEL_REQUEST, ChannelRequest.class);
                             channelRequest.getPayee().getPartyIdInfo()
@@ -210,10 +216,19 @@ public class ZeebeWorkers {
         variables.put(operationName, isOperationFailed);
         if (isOperationFailed == null || isOperationFailed) {
             variables.put(operationName, true);
-            variables.put(ERROR_INFORMATION, ex.getIn().getBody(String.class));
-            variables.put(ERROR_CODE, ex.getIn().getHeader("CamelHttpResponseCode"));
-            variables.put(ERROR_DESCRIPTION,
-                    ConnectionUtils.parseErrorDescriptionFromJsonPayload(ex.getIn().getBody(String.class)));
+            if (FineractHttpCaller.responded(ex)) {
+                variables.put(ERROR_INFORMATION, ex.getIn().getBody(String.class));
+                variables.put(ERROR_CODE, ex.getIn().getHeader("CamelHttpResponseCode"));
+                variables.put(ERROR_DESCRIPTION,
+                        ConnectionUtils.parseErrorDescriptionFromJsonPayload(ex.getIn().getBody(String.class)));
+            } else {
+                // The route sets the code and information when Fineract did not answer (CONNECTION_ERROR,
+                // CIRCUIT_OPEN, JOB_DEADLINE, UNKNOWN_OUTCOME); there is no body to parse a description from.
+                String information = ex.getProperty(ERROR_INFORMATION, String.class);
+                variables.put(ERROR_INFORMATION, information);
+                variables.put(ERROR_CODE, ex.getProperty(ERROR_CODE, String.class));
+                variables.put(ERROR_DESCRIPTION, information);
+            }
         }
     }
 }

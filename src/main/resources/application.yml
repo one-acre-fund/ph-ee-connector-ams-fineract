@@ -44,6 +44,78 @@ fineract:
     confirmation: /paymentHub/confirmation
     client-details: /payments/validations
     validation-confirmation: /paymentHub/payments
+  # Timeouts, retries and circuit breaker of each Fineract call; see README. Override any value from
+  # the environment, e.g. FINERACT_RESILIENCE_CONFIRMATION_READTIMEOUT=20s.
+  resilience:
+    job-deadline-margin: 10s
+    # Validation moves no money: safe to repeat when no answer came back
+    verification:
+      connect-timeout: 5s
+      read-timeout: ${ams.timeout}ms
+      retry:
+        max-attempts: 3
+        initial-backoff: 500ms
+        backoff-multiplier: 2.0
+        jitter: 0.5
+        retry-status-codes: 502,503,504
+        retry-when-outcome-unknown: true
+      circuit-breaker:
+        failure-rate-threshold: 50
+        sliding-window-size: 20
+        minimum-number-of-calls: 10
+        wait-duration-in-open-state: 30s
+        permitted-calls-in-half-open-state: 3
+    client-details:
+      connect-timeout: 5s
+      read-timeout: ${ams.timeout}ms
+      retry:
+        max-attempts: 3
+        initial-backoff: 500ms
+        backoff-multiplier: 2.0
+        jitter: 0.5
+        retry-status-codes: 500,502,503,504
+        retry-when-outcome-unknown: true
+      circuit-breaker:
+        failure-rate-threshold: 50
+        sliding-window-size: 20
+        minimum-number-of-calls: 10
+        wait-duration-in-open-state: 30s
+        permitted-calls-in-half-open-state: 3
+    # Settlement writes: only gateway errors that mean the request was not taken are retried, and a
+    # request that got no answer is not sent again until Fineract confirms it deduplicates on the
+    # remote transaction id (then set retry-when-outcome-unknown: true).
+    confirmation:
+      connect-timeout: 5s
+      read-timeout: ${ams.timeout}ms
+      retry:
+        max-attempts: 3
+        initial-backoff: 500ms
+        backoff-multiplier: 2.0
+        jitter: 0.5
+        retry-status-codes: 502,503
+        retry-when-outcome-unknown: false
+      circuit-breaker:
+        failure-rate-threshold: 50
+        sliding-window-size: 20
+        minimum-number-of-calls: 10
+        wait-duration-in-open-state: 30s
+        permitted-calls-in-half-open-state: 3
+    payments:
+      connect-timeout: 5s
+      read-timeout: ${ams.timeout}ms
+      retry:
+        max-attempts: 3
+        initial-backoff: 500ms
+        backoff-multiplier: 2.0
+        jitter: 0.5
+        retry-status-codes: 502,503
+        retry-when-outcome-unknown: false
+      circuit-breaker:
+        failure-rate-threshold: 50
+        sliding-window-size: 20
+        minimum-number-of-calls: 10
+        wait-duration-in-open-state: 30s
+        permitted-calls-in-half-open-state: 3
 
 spring:
   application:

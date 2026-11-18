@@ -3,6 +3,7 @@ package org.mifos.connector.ams.fineract.camel.route;
 import static org.mifos.connector.ams.fineract.camel.config.CamelProperties.*;
 import static org.mifos.connector.ams.fineract.zeebe.ZeebeVariables.CONFIRMATION_RECEIVED;
 import static org.mifos.connector.ams.fineract.zeebe.ZeebeVariables.CUSTOM_DATA;
+import static org.mifos.connector.ams.fineract.zeebe.ZeebeVariables.ERROR_CODE;
 import static org.mifos.connector.ams.fineract.zeebe.ZeebeVariables.EXTERNAL_ID;
 import static org.mifos.connector.ams.fineract.zeebe.ZeebeVariables.PARTY_LOOKUP_FAILED;
 import static org.mifos.connector.ams.fineract.zeebe.ZeebeVariables.TRANSACTION_FAILED;
@@ -23,7 +24,9 @@ import org.mifos.connector.ams.fineract.data.FineractConfirmationRequestDto;
 import org.mifos.connector.ams.fineract.data.FineractGetValidationResponse;
 import org.mifos.connector.ams.fineract.data.FineractPaymentRequest;
 import org.mifos.connector.ams.fineract.data.FineractRequestDto;
-import org.mifos.connector.ams.fineract.util.ConnectionUtils;
+import org.mifos.connector.ams.fineract.resilience.FineractCallOutcome;
+import org.mifos.connector.ams.fineract.resilience.FineractEndpoint;
+import org.mifos.connector.ams.fineract.resilience.FineractHttpCaller;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -31,6 +34,8 @@ import org.springframework.stereotype.Component;
 @Slf4j
 @Component
 public class FineractRouteBuilder extends RouteBuilder {
+
+    private static final String CALL_OPTIONS = "?bridgeEndpoint=true&throwExceptionOnFailure=false";
 
     @Value("${fineract.base-url}")
     private String fineractBaseUrl;
@@ -47,8 +52,11 @@ public class FineractRouteBuilder extends RouteBuilder {
     @Value("${fineract.endpoint.validation-confirmation}")
     private String validationAndConfirmationEndpoint;
 
-    @Value("${ams.timeout}")
-    private Integer amsTimeout;
+    private final FineractHttpCaller fineractHttpCaller;
+
+    public FineractRouteBuilder(FineractHttpCaller fineractHttpCaller) {
+        this.fineractHttpCaller = fineractHttpCaller;
+    }
 
     @Override
     public void configure() throws Exception {
@@ -81,9 +89,16 @@ public class FineractRouteBuilder extends RouteBuilder {
 
         from("direct:error-handler").log(LoggingLevel.ERROR, "Error handler route: ${body}");
 
+        /*
+         * A call that never reached Fineract, or that was sent but got no answer, fails the step with an error code
+         * that says which of the two happened: the first is safe to run again, the second needs Fineract checked first.
+         * Any other status than 200 fails it as before.
+         */
         from("direct:transfer-validation-base").id("transfer-validation-base")
                 .log(LoggingLevel.INFO, "## Starting transfer Validation base route").to("direct:transfer-validation")
-                .choice().when(header(CAMEL_HTTP_RESPONSE_CODE).isEqualTo("200"))
+                .choice().when(exchange -> !FineractHttpCaller.responded(exchange))
+                .process(exchange -> setErrorDataForNoResponse(exchange, PARTY_LOOKUP_FAILED, "Validation"))
+                .when(header(CAMEL_HTTP_RESPONSE_CODE).isEqualTo("200"))
                 .log(LoggingLevel.INFO,
                         "Fineract validation successful for transaction ${exchangeProperty." + TRANSACTION_ID + "}")
                 .process(exchange -> {
@@ -97,8 +112,14 @@ public class FineractRouteBuilder extends RouteBuilder {
                     exchange.setProperty(MSISDN_VARIABLE_NAME, exchange.getProperty(MSISDN_VARIABLE_NAME));
                     log.debug("Fineract Validation Success");
                 }).choice().when(exchangeProperty(GET_ACCOUNT_DETAILS_FLAG).isEqualTo(true))
-                .to("direct:get-client-details").unmarshal()
-                .json(JsonLibrary.Jackson, FineractGetValidationResponse[].class).process(e -> {
+                .to("direct:get-client-details").process(exchange -> {
+                    // Without an answer there are no details to read; the lookup is part of the validation, so the
+                    // validation fails as it does today when the details cannot be parsed.
+                    if (!FineractHttpCaller.responded(exchange)) {
+                        setErrorDataForNoResponse(exchange, PARTY_LOOKUP_FAILED, "Client details");
+                        exchange.getMessage().setBody("[]");
+                    }
+                }).unmarshal().json(JsonLibrary.Jackson, FineractGetValidationResponse[].class).process(e -> {
                     log.debug("Fineract get client details api response: {}", e.getIn().getBody());
                     FineractGetValidationResponse[] clientDetailsResponse = e.getIn()
                             .getBody(FineractGetValidationResponse[].class);
@@ -149,8 +170,9 @@ public class FineractRouteBuilder extends RouteBuilder {
                     exchange.setProperty(GET_ACCOUNT_DETAILS_FLAG, verificationRequestDto.isGetAccountDetails());
                     return verificationRequestDto;
                 }).marshal().json(JsonLibrary.Jackson)
-                .toD(getValidationUrl() + "?bridgeEndpoint=true&throwExceptionOnFailure=false&"
-                        + ConnectionUtils.getConnectionTimeoutDsl(amsTimeout))
+                .process(fineractHttpCaller
+                        .call(FineractEndpoint.VERIFICATION, constant(getValidationUrl() + CALL_OPTIONS)))
+                .id("verification-call")
                 .log(LoggingLevel.INFO,
                         "Received Fineract validation response for " + "transaction ${exchangeProperty."
                                 + TRANSACTION_ID
@@ -159,6 +181,8 @@ public class FineractRouteBuilder extends RouteBuilder {
 
         from("direct:transfer-settlement-base").id("transfer-settlement-base")
                 .log(LoggingLevel.INFO, "## Transfer Settlement route").to("direct:transfer-settlement").choice()
+                .when(exchange -> !FineractHttpCaller.responded(exchange))
+                .process(exchange -> setErrorDataForNoResponse(exchange, TRANSFER_SETTLEMENT_FAILED, "Confirmation"))
                 .when(header(CAMEL_HTTP_RESPONSE_CODE).isEqualTo("200"))
                 .log(LoggingLevel.INFO,
                         "Fineract settlement successful for transaction ${exchangeProperty." + TRANSACTION_ID + "}")
@@ -219,9 +243,9 @@ public class FineractRouteBuilder extends RouteBuilder {
                             confirmationRequestDto.getRemoteTransactionId(), Instant.now(), confirmationRequestDto);
                     return confirmationRequestDto;
                 }).marshal().json(JsonLibrary.Jackson)
-                .toD(getConfirmationUrl() + "?bridgeEndpoint=true&throwExceptionOnFailure=false&"
-                        + ConnectionUtils.getConnectionTimeoutDsl(amsTimeout))
-                .log(LoggingLevel.INFO,
+                .process(fineractHttpCaller.call(FineractEndpoint.CONFIRMATION,
+                        constant(getConfirmationUrl() + CALL_OPTIONS)))
+                .id("confirmation-call").log(LoggingLevel.INFO,
                         "Received Fineract confirmation response for " + "transaction ${exchangeProperty."
                                 + TRANSACTION_ID
                                 + "} on ${header.Date} with status: ${header.CamelHttpResponseCode}. Body: \n ${body}");
@@ -238,9 +262,9 @@ public class FineractRouteBuilder extends RouteBuilder {
                             Instant.now());
                 }).log(" ## Transaction id: ${header.transactionId}")
                 .log(" ## Transaction id as property: ${exchangeProperty.transactionId}")
-                .toD("${header.clientDetailsUrl}/${header.transactionId}?bridgeEndpoint=true&throwExceptionOnFailure=false&"
-                        + ConnectionUtils.getConnectionTimeoutDsl(amsTimeout))
-                .log(LoggingLevel.INFO, "Headers: ${headers}")
+                .process(fineractHttpCaller.call(FineractEndpoint.CLIENT_DETAILS,
+                        simple("${header.clientDetailsUrl}/${header.transactionId}" + CALL_OPTIONS)))
+                .id("client-details-call").log(LoggingLevel.INFO, "Headers: ${headers}")
                 .log(LoggingLevel.INFO, "Status: ${header.CamelHttpResponseCode}").log(LoggingLevel.INFO,
                         "Received Fineract client details response for " + "transaction ${exchangeProperty."
                                 + TRANSACTION_ID
@@ -248,6 +272,9 @@ public class FineractRouteBuilder extends RouteBuilder {
 
         from("direct:transfer-validation-and-settlement-base").id("transfer-validation-and-settlement-base")
                 .setBody(exchangeProperty(CHANNEL_REQUEST)).to("direct:transfer-validation-and-settlement").choice()
+                .when(exchange -> !FineractHttpCaller.responded(exchange))
+                .process(exchange -> setErrorDataForNoResponse(exchange, TRANSFER_SETTLEMENT_FAILED,
+                        "Validation & confirmation"))
                 .when(header(CAMEL_HTTP_RESPONSE_CODE).isEqualTo("200"))
                 .log("Fineract validation & settlement successful for transaction ${exchangeProperty." + EXTERNAL_ID
                         + "}")
@@ -270,9 +297,9 @@ public class FineractRouteBuilder extends RouteBuilder {
                     exchange.setProperty(CHANNEL_REQUEST, channelRequest);
                     return request;
                 }).marshal().json()
-                .toD(fineractBaseUrl + validationAndConfirmationEndpoint
-                        + "?bridgeEndpoint=true&throwExceptionOnFailure=false&"
-                        + ConnectionUtils.getConnectionTimeoutDsl(amsTimeout))
+                .process(fineractHttpCaller.call(FineractEndpoint.PAYMENTS,
+                        constant(fineractBaseUrl + validationAndConfirmationEndpoint + CALL_OPTIONS)))
+                .id("payments-call")
                 .log("Received Fineract validation & confirmation response for " + "transaction ${exchangeProperty."
                         + EXTERNAL_ID
                         + "} on ${header.Date} with status: ${header.CamelHttpResponseCode}. Body: \n ${body}")
@@ -304,5 +331,42 @@ public class FineractRouteBuilder extends RouteBuilder {
      */
     private String getClientDetailsUrl() {
         return fineractBaseUrl + clientDetailsEndpoint;
+    }
+
+    /**
+     * Fails a step whose Fineract call got no answer. The reason goes into the error code and the error information,
+     * which the worker publishes to the workflow.
+     *
+     * @param exchange
+     *            {@link Exchange}
+     * @param failedFlag
+     *            the step's failure flag, {@code partyLookupFailed} or {@code transferSettlementFailed}
+     * @param call
+     *            the name of the call, for the error information
+     */
+    private static void setErrorDataForNoResponse(Exchange exchange, String failedFlag, String call) {
+        FineractCallOutcome outcome = exchange.getProperty(FineractHttpCaller.CALL_OUTCOME, FineractCallOutcome.class);
+        String reason = exchange.getProperty(FineractHttpCaller.CALL_FAILURE, String.class);
+        String errorCode;
+        String information;
+        if (outcome == FineractCallOutcome.UNKNOWN) {
+            errorCode = "UNKNOWN_OUTCOME";
+            information = call + " request sent to Fineract but no response came back: " + reason;
+        } else {
+            errorCode = notSentErrorCode(reason);
+            information = call + " request not sent to Fineract: " + reason;
+        }
+        log.error("{} of transaction {} failed, {} ({})", call, exchange.getProperty(TRANSACTION_ID), errorCode,
+                reason);
+        exchange.setProperty(failedFlag, true);
+        exchange.setProperty(ERROR_CODE, errorCode);
+        exchange.setProperty(ERROR_INFORMATION, information);
+    }
+
+    private static String notSentErrorCode(String reason) {
+        if ("circuit_open".equals(reason)) {
+            return "CIRCUIT_OPEN";
+        }
+        return "job_deadline".equals(reason) ? "JOB_DEADLINE" : "CONNECTION_ERROR";
     }
 }
