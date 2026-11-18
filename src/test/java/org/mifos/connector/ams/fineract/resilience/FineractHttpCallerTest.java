@@ -14,6 +14,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
+import com.github.tomakehurst.wiremock.verification.LoggedRequest;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig;
 import io.github.resilience4j.retry.RetryConfig;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -24,12 +25,14 @@ import java.net.NoRouteToHostException;
 import java.net.ServerSocket;
 import java.net.SocketTimeoutException;
 import java.net.UnknownHostException;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 import javax.net.ssl.SSLHandshakeException;
 import org.apache.camel.CamelContext;
 import org.apache.camel.Exchange;
 import org.apache.camel.ProducerTemplate;
+import org.apache.camel.converter.stream.InputStreamCache;
 import org.apache.camel.impl.DefaultCamelContext;
 import org.apache.camel.support.DefaultExchange;
 import org.apache.http.conn.ConnectTimeoutException;
@@ -103,6 +106,26 @@ class FineractHttpCallerTest {
 
         assertEquals(200, status(exchange));
         fineract.verify(2, postRequestedFor(urlEqualTo(PATH)));
+    }
+
+    @Test
+    void retriedRequestCarriesTheMarshalledBodyAgain() {
+        fineract.stubFor(post(PATH).inScenario("flaky").whenScenarioStateIs(STARTED)
+                .willReturn(aResponse().withStatus(503)).willSetStateTo("recovered"));
+        fineract.stubFor(post(PATH).inScenario("flaky").whenScenarioStateIs("recovered")
+                .willReturn(aResponse().withStatus(200)));
+        Exchange exchange = newExchange();
+        // what .marshal().json() leaves on the message when stream caching is on
+        exchange.getMessage()
+                .setBody(new InputStreamCache("{\"data\":{\"id\":\"txn-1\"}}".getBytes(StandardCharsets.UTF_8)));
+
+        caller.call(FineractEndpoint.CONFIRMATION, uri(), exchange);
+
+        assertEquals(200, status(exchange));
+        for (LoggedRequest request : fineract.findAll(postRequestedFor(urlEqualTo(PATH)))) {
+            assertEquals("{\"data\":{\"id\":\"txn-1\"}}", request.getBodyAsString());
+        }
+        assertEquals(2, fineract.findAll(postRequestedFor(urlEqualTo(PATH))).size());
     }
 
     @Test
