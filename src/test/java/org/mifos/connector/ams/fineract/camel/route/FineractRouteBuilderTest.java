@@ -1,28 +1,44 @@
 package org.mifos.connector.ams.fineract.camel.route;
 
+import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
+import static com.github.tomakehurst.wiremock.client.WireMock.post;
+import static com.github.tomakehurst.wiremock.client.WireMock.postRequestedFor;
+import static com.github.tomakehurst.wiremock.client.WireMock.urlEqualTo;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mifos.connector.ams.fineract.camel.config.CamelProperties.*;
 import static org.mifos.connector.ams.fineract.zeebe.ZeebeVariables.*;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.github.tomakehurst.wiremock.WireMockServer;
+import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
+import com.github.tomakehurst.wiremock.verification.LoggedRequest;
+import java.util.List;
 import org.apache.camel.*;
 import org.apache.camel.builder.AdviceWith;
 import org.apache.camel.component.mock.MockEndpoint;
 import org.apache.camel.model.language.ConstantExpression;
 import org.apache.camel.support.DefaultExchange;
 import org.json.JSONObject;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mifos.connector.ams.fineract.FineractConnectorApplicationSetUp;
 import org.mifos.connector.ams.fineract.data.FineractGetValidationResponse;
-import org.mifos.connector.ams.fineract.util.ConnectionUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.test.annotation.DirtiesContext;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_EACH_TEST_METHOD)
 class FineractRouteBuilderTest extends FineractConnectorApplicationSetUp {
+
+    private static final WireMockServer FINERACT = new WireMockServer(WireMockConfiguration.options().dynamicPort());
+
+    static {
+        FINERACT.start();
+    }
 
     @Autowired
     private CamelContext camelContext;
@@ -59,16 +75,32 @@ class FineractRouteBuilderTest extends FineractConnectorApplicationSetUp {
     @Value("${fineract.endpoint.confirmation}")
     private String confirmationEndpoint;
 
-    @Value("${ams.timeout}")
-    private Integer amsTimeout;
-
     @Value("${fineract.endpoint.validation-confirmation}")
     private String validationAndConfirmationEndpoint;
 
+    @DynamicPropertySource
+    static void fineractSettings(DynamicPropertyRegistry registry) {
+        registry.add("fineract.base-url", FINERACT::baseUrl);
+    }
+
+    @AfterAll
+    static void stopFineract() {
+        FINERACT.stop();
+    }
+
     @BeforeEach
     void setUp() {
+        FINERACT.resetAll();
         mockTransferSettlementEndpoint.reset();
         mockAmsConfirmationEndpoint.reset();
+    }
+
+    /** The body of the one request Fineract received on the path, after checking its method and content type. */
+    private static String requestBody(String path) {
+        List<LoggedRequest> requests = FINERACT.findAll(postRequestedFor(urlEqualTo(path)));
+        assertEquals(1, requests.size());
+        assertEquals("application/json", requests.get(0).getHeader("Content-Type"));
+        return requests.get(0).getBodyAsString();
     }
 
     @DisplayName("When the transfer settlement base route is called, the transfer settlement route should be called")
@@ -186,16 +218,7 @@ class FineractRouteBuilderTest extends FineractConnectorApplicationSetUp {
     @DisplayName("When the transfer settlement base route is called, the transfer settlement route should be called, and the body should be as expected for pay bill.")
     @Test
     void testTransferSettlementRouteReturnsExpectedResponse() throws Exception {
-        AdviceWith.adviceWith(camelContext, "transfer-settlement", routeBuilder -> {
-            routeBuilder
-                    .weaveByToUri(fineractBaseUrl + confirmationEndpoint
-                            + "?bridgeEndpoint=true&throwExceptionOnFailure=false&"
-                            + ConnectionUtils.getConnectionTimeoutDsl(amsTimeout))
-                    .replace().to(mockAmsConfirmationEndpoint);
-        });
-        mockAmsConfirmationEndpoint.expectedMessageCount(1);
-        mockAmsConfirmationEndpoint.expectedHeaderReceived(Exchange.HTTP_METHOD, "POST");
-        mockAmsConfirmationEndpoint.expectedHeaderReceived("Content-Type", "application/json");
+        FINERACT.stubFor(post(confirmationEndpoint).willReturn(aResponse().withStatus(200)));
 
         String mockedConfirmationRequest = """
                     {
@@ -227,11 +250,7 @@ class FineractRouteBuilderTest extends FineractConnectorApplicationSetUp {
         Exchange result = fluentProducerTemplate.to("direct:transfer-settlement").withBody(mockedConfirmationRequest)
                 .request(Exchange.class);
 
-        // Verify the expectations
-        mockAmsConfirmationEndpoint.assertIsSatisfied();
-
-        Exchange exchange = mockAmsConfirmationEndpoint.getExchanges().get(0);
-        String receivedBody = exchange.getIn().getBody(String.class);
+        String receivedBody = requestBody(confirmationEndpoint);
 
         assertNotNull(result);
         assertTrue(receivedBody.contains("\"Currency\":\"RWF\""));
@@ -243,17 +262,7 @@ class FineractRouteBuilderTest extends FineractConnectorApplicationSetUp {
     @DisplayName("When the transfer settlement base route is called, the transfer settlement route should be called, and the body should be as expected for buy goods.")
     @Test
     void testTransferSettlementRouteWithChanelRequest() throws Exception {
-        AdviceWith.adviceWith(camelContext, "transfer-settlement", routeBuilder -> {
-            routeBuilder
-                    .weaveByToUri(fineractBaseUrl + confirmationEndpoint
-                            + "?bridgeEndpoint=true&throwExceptionOnFailure=false&"
-                            + ConnectionUtils.getConnectionTimeoutDsl(amsTimeout))
-                    .replace().to(mockAmsConfirmationEndpoint);
-        });
-
-        mockAmsConfirmationEndpoint.expectedMessageCount(1);
-        mockAmsConfirmationEndpoint.expectedHeaderReceived(Exchange.HTTP_METHOD, "POST");
-        mockAmsConfirmationEndpoint.expectedHeaderReceived("Content-Type", "application/json");
+        FINERACT.stubFor(post(confirmationEndpoint).willReturn(aResponse().withStatus(200)));
 
         JSONObject channelRequestObject = getValidationJsonObject();
 
@@ -265,11 +274,7 @@ class FineractRouteBuilderTest extends FineractConnectorApplicationSetUp {
         // Trigger the route
         Exchange result = fluentProducerTemplate.to("direct:transfer-settlement").withExchange(exchange).send();
 
-        // Verify the expectations
-        mockAmsConfirmationEndpoint.assertIsSatisfied();
-
-        Exchange exchangeResult = mockAmsConfirmationEndpoint.getExchanges().get(0);
-        String receivedBody = exchangeResult.getIn().getBody(String.class);
+        String receivedBody = requestBody(confirmationEndpoint);
         assertNotNull(result);
         assertTrue(receivedBody.contains("\"Currency\":\"RWF\""));
         assertTrue(receivedBody.contains("\"Amount\":42.00"));
@@ -284,17 +289,7 @@ class FineractRouteBuilderTest extends FineractConnectorApplicationSetUp {
     @DisplayName("When the transfer settlement base route is called with useWorkflowIdAsTransactionIdObj, the transfer settlement route should be called, and the body should be as expected with useWorkflowIdAsTransactionIdObj as transaction id.")
     @Test
     void testTransferSettlementRouteWithUseWorkFlowIdAsTransactionId() throws Exception {
-        AdviceWith.adviceWith(camelContext, "transfer-settlement", routeBuilder -> {
-            routeBuilder
-                    .weaveByToUri(fineractBaseUrl + confirmationEndpoint
-                            + "?bridgeEndpoint=true&throwExceptionOnFailure=false&"
-                            + ConnectionUtils.getConnectionTimeoutDsl(amsTimeout))
-                    .replace().to(mockAmsConfirmationEndpoint);
-        });
-
-        mockAmsConfirmationEndpoint.expectedMessageCount(1);
-        mockAmsConfirmationEndpoint.expectedHeaderReceived(Exchange.HTTP_METHOD, "POST");
-        mockAmsConfirmationEndpoint.expectedHeaderReceived("Content-Type", "application/json");
+        FINERACT.stubFor(post(confirmationEndpoint).willReturn(aResponse().withStatus(200)));
 
         JSONObject channelRequestObject = getUseWorkflowIdAsTransactionIdChannelRequest();
 
@@ -305,11 +300,7 @@ class FineractRouteBuilderTest extends FineractConnectorApplicationSetUp {
         // Trigger the route
         Exchange result = fluentProducerTemplate.to("direct:transfer-settlement").withExchange(exchange).send();
 
-        // Verify the expectations
-        mockAmsConfirmationEndpoint.assertIsSatisfied();
-
-        Exchange exchangeResult = mockAmsConfirmationEndpoint.getExchanges().get(0);
-        String receivedBody = exchangeResult.getIn().getBody(String.class);
+        String receivedBody = requestBody(confirmationEndpoint);
         assertNotNull(result);
         assertTrue(receivedBody.contains("\"Currency\":\"RWF\""));
         assertTrue(receivedBody.contains("\"Amount\":42.00"));
@@ -324,17 +315,7 @@ class FineractRouteBuilderTest extends FineractConnectorApplicationSetUp {
     @DisplayName("When the transfer settlement base route is called with useWorkflowIdAsTransactionIdObj as false, the transfer settlement route should be called, and the body should be as expected with useWorkflowIdAsTransactionIdObj not as transaction id.")
     @Test
     void testTransferSettlementRouteUseWorkFlowIdAsTransactionIdAsFalse() throws Exception {
-        AdviceWith.adviceWith(camelContext, "transfer-settlement", routeBuilder -> {
-            routeBuilder
-                    .weaveByToUri(fineractBaseUrl + confirmationEndpoint
-                            + "?bridgeEndpoint=true&throwExceptionOnFailure=false&"
-                            + ConnectionUtils.getConnectionTimeoutDsl(amsTimeout))
-                    .replace().to(mockAmsConfirmationEndpoint);
-        });
-
-        mockAmsConfirmationEndpoint.expectedMessageCount(1);
-        mockAmsConfirmationEndpoint.expectedHeaderReceived(Exchange.HTTP_METHOD, "POST");
-        mockAmsConfirmationEndpoint.expectedHeaderReceived("Content-Type", "application/json");
+        FINERACT.stubFor(post(confirmationEndpoint).willReturn(aResponse().withStatus(200)));
 
         Exchange exchange = camelContext.getEndpoint("direct:transfer-settlement").createExchange();
         exchange.setProperty(CHANNEL_REQUEST, getUseWorkflowIdAsTransactionIdChannelRequestWithUseWorkFlowAsFalse());
@@ -343,11 +324,7 @@ class FineractRouteBuilderTest extends FineractConnectorApplicationSetUp {
         // Trigger the route
         Exchange result = fluentProducerTemplate.to("direct:transfer-settlement").withExchange(exchange).send();
 
-        // Verify the expectations
-        mockAmsConfirmationEndpoint.assertIsSatisfied();
-
-        Exchange exchangeResult = mockAmsConfirmationEndpoint.getExchanges().get(0);
-        String receivedBody = exchangeResult.getIn().getBody(String.class);
+        String receivedBody = requestBody(confirmationEndpoint);
         assertNotNull(result);
         assertTrue(receivedBody.contains("\"Currency\":\"RWF\""));
         assertTrue(receivedBody.contains("\"Amount\":42.00"));
@@ -510,17 +487,7 @@ class FineractRouteBuilderTest extends FineractConnectorApplicationSetUp {
     @DisplayName("When the transfer validation route is called with the pay bill flow it should return the expected response.")
     @Test
     void testTransferValidationRoutePayBillFlow() throws Exception {
-        AdviceWith.adviceWith(camelContext, "transfer-validation", routeBuilder -> {
-            routeBuilder
-                    .weaveByToUri(
-                            fineractBaseUrl + validationEndpoint + "?bridgeEndpoint=true&throwExceptionOnFailure=false&"
-                                    + ConnectionUtils.getConnectionTimeoutDsl(amsTimeout))
-                    .replace().to(mockAmsValidationEndpoint);
-        });
-
-        mockAmsValidationEndpoint.expectedMessageCount(1);
-        mockAmsValidationEndpoint.expectedHeaderReceived(Exchange.HTTP_METHOD, "POST");
-        mockAmsValidationEndpoint.expectedHeaderReceived("Content-Type", "application/json");
+        FINERACT.stubFor(post(validationEndpoint).willReturn(aResponse().withStatus(200)));
 
         Exchange exchange = camelContext.getEndpoint("direct:transfer-validation").createExchange();
         exchange.setProperty(TRANSACTION_ID, "af71cac2-ec74-4bd1-a584-ea7b72d73982");
@@ -530,12 +497,7 @@ class FineractRouteBuilderTest extends FineractConnectorApplicationSetUp {
         // Trigger the route
         Exchange result = fluentProducerTemplate.to("direct:transfer-validation").withExchange(exchange).send();
 
-        // Verify the expectations
-        mockAmsValidationEndpoint.assertIsSatisfied();
-
-        Exchange exchangeResult = mockAmsValidationEndpoint.getExchanges().get(0);
-
-        String receivedBody = exchangeResult.getIn().getBody(String.class);
+        String receivedBody = requestBody(validationEndpoint);
         assertNotNull(result);
         assertTrue(receivedBody.contains("\"Currency\":\"RWF\""));
         assertTrue(receivedBody.contains("\"Amount\":1000"));
@@ -547,17 +509,7 @@ class FineractRouteBuilderTest extends FineractConnectorApplicationSetUp {
     @DisplayName("When the transfer validation route is called, it should return the expected response.")
     @Test
     void testTransferValidationRouteReturnsExpectedResponse() throws Exception {
-        AdviceWith.adviceWith(camelContext, "transfer-validation", routeBuilder -> {
-            routeBuilder
-                    .weaveByToUri(
-                            fineractBaseUrl + validationEndpoint + "?bridgeEndpoint=true&throwExceptionOnFailure=false&"
-                                    + ConnectionUtils.getConnectionTimeoutDsl(amsTimeout))
-                    .replace().to(mockAmsValidationEndpoint);
-        });
-
-        mockAmsValidationEndpoint.expectedMessageCount(1);
-        mockAmsValidationEndpoint.expectedHeaderReceived(Exchange.HTTP_METHOD, "POST");
-        mockAmsValidationEndpoint.expectedHeaderReceived("Content-Type", "application/json");
+        FINERACT.stubFor(post(validationEndpoint).willReturn(aResponse().withStatus(200)));
 
         Exchange exchange = camelContext.getEndpoint("direct:transfer-validation").createExchange();
         exchange.setProperty(TRANSACTION_ID, "af71cac2-ec74-4bd1-a584-ea7b72d73982");
@@ -568,12 +520,7 @@ class FineractRouteBuilderTest extends FineractConnectorApplicationSetUp {
         // Trigger the route
         Exchange result = fluentProducerTemplate.to("direct:transfer-validation").withExchange(exchange).send();
 
-        // Verify the expectations
-        mockAmsValidationEndpoint.assertIsSatisfied();
-
-        Exchange exchangeResult = mockAmsValidationEndpoint.getExchanges().get(0);
-
-        String receivedBody = exchangeResult.getIn().getBody(String.class);
+        String receivedBody = requestBody(validationEndpoint);
         assertNotNull(result);
         assertTrue(receivedBody.contains("\"Currency\":\"RWF\""));
         assertTrue(receivedBody.contains("\"Amount\":42.0"));
@@ -618,12 +565,8 @@ class FineractRouteBuilderTest extends FineractConnectorApplicationSetUp {
                   }
                 }
                 """;
-        AdviceWith.adviceWith(camelContext, "transfer-validation-and-settlement", routeBuilder -> {
-            routeBuilder.weaveByToUri("https://*").replace().process(ex -> {
-                ex.getIn().setBody(fineractPaymentResponse);
-                ex.getIn().setHeader(Exchange.HTTP_RESPONSE_CODE, 200);
-            });
-        });
+        FINERACT.stubFor(post(validationAndConfirmationEndpoint)
+                .willReturn(aResponse().withStatus(200).withBody(fineractPaymentResponse)));
         Exchange exchange = new DefaultExchange(camelContext);
         exchange.getIn().setBody(channelRequest);
 

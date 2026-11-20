@@ -8,11 +8,12 @@ plugins {
 }
 
 group = 'org.mifos'
-version = '0.2.6'
+version = '0.3.0'
 description = 'ph-ee-connector-ams-fineract'
 sourceCompatibility = '17'
 
 def camelCoreVersion = '3.20.2'
+def resilience4jVersion = '2.2.0'
 def phConnectorCommonVersion = '1.5.1-gazelle'
 
 repositories {
@@ -36,7 +37,12 @@ dependencies {
     implementation 'org.json:json:20230227'
     implementation 'com.google.code.gson:gson:2.10.1'
     implementation 'io.micrometer:micrometer-registry-prometheus'
+    implementation "io.github.resilience4j:resilience4j-circuitbreaker:${resilience4jVersion}"
+    implementation "io.github.resilience4j:resilience4j-retry:${resilience4jVersion}"
+    implementation "io.github.resilience4j:resilience4j-micrometer:${resilience4jVersion}"
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testImplementation 'com.github.tomakehurst:wiremock-jre8-standalone:2.35.2'
+    testImplementation 'org.awaitility:awaitility'
     testImplementation 'junit:junit:4.11'
     testImplementation 'org.mockito:mockito-core:3.12.4'
     testImplementation "org.apache.camel:camel-test-spring-junit5:${camelCoreVersion}"
