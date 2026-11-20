@@ -86,7 +86,7 @@ class FineractResilienceFlowTest extends FineractConnectorApplicationSetUp {
         assertEquals(Duration.ofMillis(300), properties.getConfirmation().getReadTimeout());
         assertEquals(Duration.ofSeconds(60), properties.getClientDetails().getReadTimeout());
         assertEquals(4, properties.getConfirmation().getCircuitBreaker().getMinimumNumberOfCalls());
-        assertEquals(List.of(502, 503), properties.getConfirmation().getRetry().getRetryStatusCodes());
+        assertEquals(List.of(503), properties.getConfirmation().getRetry().getRetryStatusCodes());
         assertFalse(properties.getConfirmation().getRetry().isRetryWhenOutcomeUnknown());
         assertEquals(List.of(502, 503, 504), properties.getVerification().getRetry().getRetryStatusCodes());
         assertTrue(properties.getVerification().getRetry().isRetryWhenOutcomeUnknown());

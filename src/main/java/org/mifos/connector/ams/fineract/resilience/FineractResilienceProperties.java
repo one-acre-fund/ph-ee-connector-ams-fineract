@@ -32,16 +32,16 @@ public class FineractResilienceProperties {
     private EndpointSettings clientDetails = new EndpointSettings(List.of(500, 502, 503, 504), true);
 
     /**
-     * The confirmation posts a settlement into the ledger. Only gateway errors that mean the request was not taken
-     * (502, 503) are retried, and a request that was sent but got no answer is not sent again until Fineract confirms
-     * it deduplicates on the remote transaction id.
+     * The confirmation posts a settlement into the ledger. Only a 503, which means the request was not taken, is
+     * retried (a 502 can follow a request that was taken), and a request that was sent but got no answer is not sent
+     * again until Fineract confirms it deduplicates on the remote transaction id.
      */
-    private EndpointSettings confirmation = new EndpointSettings(List.of(502, 503), false);
+    private EndpointSettings confirmation = new EndpointSettings(List.of(503), false);
 
     /**
      * Validation and settlement in one call (virtual accounts): a ledger write like the confirmation.
      */
-    private EndpointSettings payments = new EndpointSettings(List.of(502, 503), false);
+    private EndpointSettings payments = new EndpointSettings(List.of(503), false);
 
     /**
      * Settings for one endpoint.
@@ -114,7 +114,7 @@ public class FineractResilienceProperties {
         private CircuitBreaker circuitBreaker = new CircuitBreaker();
 
         public EndpointSettings() {
-            this(List.of(502, 503), false);
+            this(List.of(503), false);
         }
 
         EndpointSettings(List<Integer> retryStatusCodes, boolean retryWhenOutcomeUnknown) {

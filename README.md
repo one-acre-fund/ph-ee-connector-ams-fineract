@@ -137,7 +137,7 @@ retries and circuit breaker, one per endpoint and host (for example
 
 **Reads and writes differ.** The verification and the client details lookup move no money, so they
 are retried on timeouts too. The confirmation and the payments call post a settlement into the
-ledger: only 502 and 503 (the gateway did not hand the request on) are retried, and a request that
+ledger: only a 503 (the gateway had no backend to hand the request to) is retried, and a request that
 got no answer is not sent again, because Fineract has not confirmed that a second confirmation
 with the same `remoteTransactionId` is ignored. The settlement is failed with `UNKNOWN_OUTCOME` so
 an operator checks Fineract before settling it again. Once Fineract confirms it deduplicates, set
@@ -176,7 +176,7 @@ closes, otherwise it opens again.
 | `read-timeout` | `ams.timeout` (60s) | `ams.timeout` (60s) | `ams.timeout` (60s) | `ams.timeout` (60s) |
 | `retry.max-attempts` (including the first call) | 3 | 3 | 3 | 3 |
 | `retry.initial-backoff` / `backoff-multiplier` / `jitter` | 500ms / 2.0 / 0.5 | 500ms / 2.0 / 0.5 | 500ms / 2.0 / 0.5 | 500ms / 2.0 / 0.5 |
-| `retry.retry-status-codes` | 502,503,504 | 500,502,503,504 | 502,503 | 502,503 |
+| `retry.retry-status-codes` | 502,503,504 | 500,502,503,504 | 503 | 503 |
 | `retry.retry-when-outcome-unknown` | true | true | false | false |
 | `circuit-breaker.failure-rate-threshold` (%) | 50 | 50 | 50 | 50 |
 | `circuit-breaker.sliding-window-size` / `minimum-number-of-calls` | 20 / 10 | 20 / 10 | 20 / 10 | 20 / 10 |
