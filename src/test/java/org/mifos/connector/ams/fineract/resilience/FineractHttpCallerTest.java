@@ -439,6 +439,22 @@ class FineractHttpCallerTest {
         await().pollDelay(Duration.ofMillis(400)).atMost(Duration.ofSeconds(2)).until(() -> true);
     }
 
+    @Test
+    void circuitOpeningBetweenAttemptsReportsTheEarlierAttempt() {
+        stub(503);
+        properties.getConfirmation().getRetry().setMaxAttempts(3);
+        properties.getConfirmation().getCircuitBreaker().setSlidingWindowSize(2);
+        properties.getConfirmation().getCircuitBreaker().setMinimumNumberOfCalls(2);
+        caller = newCaller();
+
+        Exchange exchange = call();
+
+        assertEquals(FineractCallOutcome.RESPONDED, exchange.getProperty(FineractHttpCaller.CALL_OUTCOME));
+        assertEquals("status:503", exchange.getProperty(FineractHttpCaller.CALL_FAILURE));
+        assertEquals(503, status(exchange));
+        fineract.verify(2, postRequestedFor(urlEqualTo(PATH)));
+    }
+
     private void singleAttemptWithSmallWindow() {
         for (FineractEndpoint endpoint : FineractEndpoint.values()) {
             FineractResilienceProperties.EndpointSettings settings = properties.settingsFor(endpoint);

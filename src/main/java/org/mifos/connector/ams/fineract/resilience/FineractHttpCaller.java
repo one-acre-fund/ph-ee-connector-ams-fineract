@@ -152,17 +152,28 @@ public class FineractHttpCaller {
             })).run();
             exchange.setProperty(CALL_OUTCOME, FineractCallOutcome.RESPONDED);
         } catch (CallNotPermittedException e) {
+            FailedAttempt previous = lastFailure.get();
             if (logger.isWarnEnabled()) {
-                logger.warn("event=fineract_call_rejected circuit={} state={}", name, circuitBreaker.getState());
+                logger.warn("event=fineract_call_rejected circuit={} state={} after={}", name,
+                        circuitBreaker.getState(), reason(previous));
             }
-            noResponse(exchange, FineractCallOutcome.NOT_SENT, "circuit_open");
-        } catch (FailedAttempt e) {
-            if (e.outcome == FineractCallOutcome.RESPONDED) {
-                exchange.setProperty(CALL_OUTCOME, FineractCallOutcome.RESPONDED);
-                exchange.setProperty(CALL_FAILURE, e.getMessage());
+            if (previous == null) {
+                noResponse(exchange, FineractCallOutcome.NOT_SENT, "circuit_open");
             } else {
-                noResponse(exchange, e.outcome, e.getMessage());
+                // An earlier attempt of this call went out: its outcome is the one to report.
+                failed(exchange, previous);
             }
+        } catch (FailedAttempt e) {
+            failed(exchange, e);
+        }
+    }
+
+    private static void failed(Exchange exchange, FailedAttempt failure) {
+        if (failure.outcome == FineractCallOutcome.RESPONDED) {
+            exchange.setProperty(CALL_OUTCOME, FineractCallOutcome.RESPONDED);
+            exchange.setProperty(CALL_FAILURE, failure.getMessage());
+        } else {
+            noResponse(exchange, failure.outcome, failure.getMessage());
         }
     }
 
