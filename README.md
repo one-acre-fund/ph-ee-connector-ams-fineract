@@ -143,6 +143,11 @@ with the same `remoteTransactionId` is ignored. The settlement is failed with `U
 an operator checks Fineract before settling it again. Once Fineract confirms it deduplicates, set
 `FINERACT_RESILIENCE_CONFIRMATION_RETRY_RETRYWHENOUTCOMEUNKNOWN=true` (and the same for `PAYMENTS`)
 and such calls are retried.
+A 502 or 504 from a gateway in front of Fineract (nginx lost the connection or gave up waiting) is
+treated the same way on a write: Fineract may still post the settlement, so it fails with
+`UNKNOWN_OUTCOME` (`bad_gateway:502` or `gateway_timeout:504` in `errorInformation`), not as
+Fineract's answer. A response body that is not Fineract's JSON (an HTML error page) never fails the Zeebe job;
+the step fails with the HTTP status and the job completes, so it is not offered again and re-posted.
 
 **Retries stay within the Zeebe job.** An attempt (first call or retry) is only made if it can
 finish, at its connect and read timeouts, `job-deadline-margin` (10s) before the job's deadline.
@@ -165,7 +170,7 @@ closes, otherwise it opens again.
 | `CONNECTION_ERROR` | the request never reached Fineract, even after retries | yes |
 | `CIRCUIT_OPEN` | not sent, Fineract is being failed fast | yes, after recovery |
 | `JOB_DEADLINE` | not sent, no time left before the Zeebe job deadline | yes |
-| `UNKNOWN_OUTCOME` | sent, but no response came back | reads: yes; writes: check Fineract first |
+| `UNKNOWN_OUTCOME` | sent, but no response came back (or, on a write, a gateway answered 502 or 504) | reads: yes; writes: check Fineract first |
 
 **Defaults** (`fineract.resilience.<endpoint>` in `application.yml`; `<endpoint>` is
 `verification`, `client-details`, `confirmation` or `payments`):

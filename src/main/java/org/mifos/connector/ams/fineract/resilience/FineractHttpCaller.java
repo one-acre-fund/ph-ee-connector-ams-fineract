@@ -30,6 +30,7 @@ import org.apache.camel.ProducerTemplate;
 import org.apache.camel.support.DefaultMessage;
 import org.apache.http.conn.ConnectTimeoutException;
 import org.mifos.connector.ams.fineract.resilience.FineractResilienceProperties.EndpointSettings;
+import org.mifos.connector.ams.fineract.util.ConnectionUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
@@ -50,6 +51,12 @@ public class FineractHttpCaller {
      * Epoch millis at which the Zeebe job that triggered the call times out.
      */
     public static final String JOB_DEADLINE = "fineractJobDeadline";
+
+    /**
+     * What a proxy in front of Fineract answers when it could not get Fineract's own answer: 502 (bad gateway) and 504
+     * (gateway timeout). Either can follow a request Fineract already took.
+     */
+    private static final Map<Integer, String> GATEWAY_ERRORS = Map.of(502, "bad_gateway", 504, "gateway_timeout");
 
     private static final Pattern HOST = Pattern.compile("^[a-zA-Z][a-zA-Z0-9+.-]*://([^/:?]+)");
 
@@ -221,6 +228,16 @@ public class FineractHttpCaller {
         int status = exchange.getMessage().getHeader(Exchange.HTTP_RESPONSE_CODE, 0, Integer.class);
         if (settings.getRetry().getRetryStatusCodes().contains(status)) {
             throw new FailedAttempt(FineractCallOutcome.RESPONDED, "status:" + status, true, true);
+        }
+        String gatewayError = GATEWAY_ERRORS.get(status);
+        if (gatewayError != null && !settings.getRetry().isRetryWhenOutcomeUnknown()) {
+            // A proxy did not get Fineract's answer, and Fineract may still act on the request: for a write
+            // this is the same as no answer at all, and must not be sent again or read as Fineract's response.
+            if (logger.isWarnEnabled()) {
+                logger.warn("event=fineract_gateway_error host={} status={} body={}", hostOf(target), status,
+                        ConnectionUtils.truncate(exchange.getMessage().getBody(String.class)));
+            }
+            throw new FailedAttempt(FineractCallOutcome.UNKNOWN, gatewayError + ":" + status, false, true);
         }
         if (status >= 500) {
             throw new FailedAttempt(FineractCallOutcome.RESPONDED, "status:" + status, false, true);

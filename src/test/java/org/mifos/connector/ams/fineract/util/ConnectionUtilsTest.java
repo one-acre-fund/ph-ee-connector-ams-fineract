@@ -99,4 +99,20 @@ class ConnectionUtilsTest {
         assertEquals("Internal Server Error", result);
     }
 
+    @Test
+    void truncate_keepsShortBodiesAndNull() {
+        assertNull(ConnectionUtils.truncate(null));
+        assertEquals("<html>504</html>", ConnectionUtils.truncate("<html>504</html>"));
+        String limit = "a".repeat(ConnectionUtils.MAX_LOGGED_BODY_LENGTH);
+        assertEquals(limit, ConnectionUtils.truncate(limit));
+    }
+
+    @Test
+    void truncate_cutsLongBodiesAndSaysHowLongTheyWere() {
+        String body = "b".repeat(ConnectionUtils.MAX_LOGGED_BODY_LENGTH + 500);
+
+        String result = ConnectionUtils.truncate(body);
+
+        assertEquals("b".repeat(ConnectionUtils.MAX_LOGGED_BODY_LENGTH) + "...[truncated, 1500 chars]", result);
+    }
 }

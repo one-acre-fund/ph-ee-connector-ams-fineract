@@ -45,6 +45,8 @@ class FineractHttpCallerTest {
 
     private static final String PATH = "/fineract-provider/api/v1/paymentHub/confirmation";
     private static final String CONFIRMATION = "fineract-confirmation-localhost";
+    private static final String NGINX_504_PAGE = "<html><head><title>504 Gateway Time-out</title></head>"
+            + "<body><center><h1>504 Gateway Time-out</h1></center><hr><center>nginx</center></body></html>";
 
     private WireMockServer fineract;
     private CamelContext camelContext;
@@ -228,6 +230,75 @@ class FineractHttpCallerTest {
         call(FineractEndpoint.VERIFICATION);
 
         fineract.verify(3, postRequestedFor(urlEqualTo(PATH)));
+    }
+
+    @Test
+    void badGatewayOnAWriteIsAnUnknownOutcomeAndIsNotSentAgain() {
+        fineract.stubFor(post(PATH).willReturn(aResponse().withStatus(502).withBody("<html>502 Bad Gateway</html>")));
+
+        for (FineractEndpoint write : List.of(FineractEndpoint.CONFIRMATION, FineractEndpoint.PAYMENTS)) {
+            fineract.resetRequests();
+
+            Exchange exchange = call(write);
+
+            assertEquals(FineractCallOutcome.UNKNOWN, exchange.getProperty(FineractHttpCaller.CALL_OUTCOME));
+            assertEquals("bad_gateway:502", exchange.getProperty(FineractHttpCaller.CALL_FAILURE));
+            assertNull(exchange.getMessage().getBody());
+            fineract.verify(1, postRequestedFor(urlEqualTo(PATH)));
+        }
+    }
+
+    @Test
+    void badGatewayOnAReadIsStillRetried() {
+        stub(502);
+
+        Exchange exchange = call(FineractEndpoint.VERIFICATION);
+
+        assertEquals(FineractCallOutcome.RESPONDED, exchange.getProperty(FineractHttpCaller.CALL_OUTCOME));
+        assertEquals(502, status(exchange));
+        fineract.verify(3, postRequestedFor(urlEqualTo(PATH)));
+    }
+
+    @Test
+    void gatewayTimeoutOnAWriteIsAnUnknownOutcomeAndIsNotSentAgain() {
+        fineract.stubFor(post(PATH).willReturn(aResponse().withStatus(504).withBody(NGINX_504_PAGE)));
+
+        for (FineractEndpoint write : List.of(FineractEndpoint.CONFIRMATION, FineractEndpoint.PAYMENTS)) {
+            fineract.resetRequests();
+
+            Exchange exchange = call(write);
+
+            assertEquals(FineractCallOutcome.UNKNOWN, exchange.getProperty(FineractHttpCaller.CALL_OUTCOME));
+            assertEquals("gateway_timeout:504", exchange.getProperty(FineractHttpCaller.CALL_FAILURE));
+            assertFalse(FineractHttpCaller.responded(exchange));
+            assertNull(exchange.getMessage().getBody(), "the nginx page is not left as Fineract's response");
+            fineract.verify(1, postRequestedFor(urlEqualTo(PATH)));
+        }
+    }
+
+    @Test
+    void gatewayTimeoutOnAWriteIsRetriedWhenConfiguredAsRetryable() {
+        properties.getPayments().getRetry().setRetryStatusCodes(List.of(503, 504));
+        caller = newCaller();
+        fineract.stubFor(post(PATH).willReturn(aResponse().withStatus(504).withBody(NGINX_504_PAGE)));
+
+        Exchange exchange = call(FineractEndpoint.PAYMENTS);
+
+        assertEquals(FineractCallOutcome.RESPONDED, exchange.getProperty(FineractHttpCaller.CALL_OUTCOME));
+        assertEquals(504, status(exchange));
+        fineract.verify(3, postRequestedFor(urlEqualTo(PATH)));
+    }
+
+    @Test
+    void serverErrorOnAWriteIsAnAnswerAndIsNotSentAgain() {
+        fineract.stubFor(post(PATH).willReturn(aResponse().withStatus(500).withBody("<html>error</html>")));
+
+        Exchange exchange = call(FineractEndpoint.PAYMENTS);
+
+        assertEquals(FineractCallOutcome.RESPONDED, exchange.getProperty(FineractHttpCaller.CALL_OUTCOME));
+        assertEquals(500, status(exchange));
+        assertEquals("<html>error</html>", exchange.getMessage().getBody(String.class));
+        fineract.verify(1, postRequestedFor(urlEqualTo(PATH)));
     }
 
     @Test
