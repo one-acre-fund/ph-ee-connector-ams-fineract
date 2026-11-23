@@ -2,6 +2,7 @@ package org.mifos.connector.ams.fineract.zeebe;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mifos.connector.ams.fineract.camel.config.CamelProperties.AMS_PAYMENT_RESPONSE;
 import static org.mifos.connector.ams.fineract.camel.config.CamelProperties.CHANNEL_REQUEST;
@@ -43,6 +44,7 @@ import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 import org.apache.camel.CamelContext;
 import org.apache.camel.Exchange;
 import org.apache.camel.ProducerTemplate;
@@ -222,8 +224,44 @@ class ZeebeWorkersTest {
         assertEquals("000123", channelRequest.getPayee().getPartyIdInfo().getPartyIdentifier());
     }
 
-    @SuppressWarnings("unchecked")
+    @Test
+    void validationAndSettlementWorker_whenFineractDidNotAnswer_completesTheJobWithTheRouteError() throws Exception {
+        Map<String, Object> variables = runValidationAndSettlement(exchange -> {
+            exchange.setProperty(FineractHttpCaller.CALL_OUTCOME, FineractCallOutcome.UNKNOWN);
+            exchange.setProperty(TRANSFER_SETTLEMENT_FAILED, true);
+            exchange.setProperty(ERROR_CODE, "UNKNOWN_OUTCOME");
+            exchange.setProperty(ERROR_INFORMATION, "no response came back: gateway_timeout:504");
+        });
+
+        assertTrue((Boolean) variables.get(TRANSFER_SETTLEMENT_FAILED));
+        assertEquals("UNKNOWN_OUTCOME", variables.get(ERROR_CODE));
+        assertEquals("no response came back: gateway_timeout:504", variables.get(ERROR_INFORMATION));
+        assertNull(variables.get(AMS_PAYMENT_RESPONSE));
+        assertEquals(CHANNEL_REQUEST_JSON, variables.get(CHANNEL_REQUEST));
+        verify(jobClient, never()).newFailCommand(anyLong());
+    }
+
+    @Test
+    void validationAndSettlementWorker_whenTheResponseBodyIsBlank_completesTheJobWithoutParsing() throws Exception {
+        Map<String, Object> variables = runValidationAndSettlement(200, "  ", false);
+
+        assertFalse((Boolean) variables.get(TRANSFER_SETTLEMENT_FAILED));
+        assertEquals(CHANNEL_REQUEST_JSON, variables.get(CHANNEL_REQUEST));
+        verify(jobClient, never()).newFailCommand(anyLong());
+    }
+
     private Map<String, Object> runValidationAndSettlement(int status, String body, boolean failed) throws Exception {
+        return runValidationAndSettlement(exchange -> {
+            exchange.setProperty(FineractHttpCaller.CALL_OUTCOME, FineractCallOutcome.RESPONDED);
+            exchange.setProperty(TRANSFER_SETTLEMENT_FAILED, failed);
+            exchange.setProperty(AMS_PAYMENT_RESPONSE, body);
+            exchange.getMessage().setHeader(Exchange.HTTP_RESPONSE_CODE, status);
+            exchange.getMessage().setBody(body);
+        });
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> runValidationAndSettlement(Consumer<Exchange> route) throws Exception {
         stubWorkerRegistration();
         stubSuccessfulComplete();
         stubJobMetadata(VALIDATION_AND_SETTLEMENT_WORKER_NAME);
@@ -233,16 +271,12 @@ class ZeebeWorkersTest {
         jobVariables.put(EXTERNAL_ID, "RKTQDM7W6S");
         when(job.getVariablesAsMap()).thenReturn(jobVariables);
         when(job.getDeadline()).thenReturn(Long.MAX_VALUE);
-        // stands in for the route: Fineract answered with this status and body
+        // stands in for the route
         doAnswer(invocation -> {
             Exchange exchange = invocation.getArgument(1);
-            exchange.setProperty(FineractHttpCaller.CALL_OUTCOME, FineractCallOutcome.RESPONDED);
             exchange.setProperty(CHANNEL_REQUEST,
                     new ObjectMapper().readValue(CHANNEL_REQUEST_JSON, ChannelRequest.class));
-            exchange.setProperty(TRANSFER_SETTLEMENT_FAILED, failed);
-            exchange.setProperty(AMS_PAYMENT_RESPONSE, body);
-            exchange.getMessage().setHeader(Exchange.HTTP_RESPONSE_CODE, status);
-            exchange.getMessage().setBody(body);
+            route.accept(exchange);
             return exchange;
         }).when(producerTemplate).send(eq("direct:transfer-validation-and-settlement-base"), any(Exchange.class));
 

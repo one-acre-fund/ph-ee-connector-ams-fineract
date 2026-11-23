@@ -12,6 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import ch.qos.logback.classic.Level;
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
 import com.github.tomakehurst.wiremock.verification.LoggedRequest;
@@ -39,6 +40,7 @@ import org.apache.http.conn.ConnectTimeoutException;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.support.DefaultListableBeanFactory;
 
 class FineractHttpCallerTest {
@@ -257,6 +259,53 @@ class FineractHttpCallerTest {
         assertEquals(FineractCallOutcome.RESPONDED, exchange.getProperty(FineractHttpCaller.CALL_OUTCOME));
         assertEquals(502, status(exchange));
         fineract.verify(3, postRequestedFor(urlEqualTo(PATH)));
+    }
+
+    @Test
+    void gatewayErrorOnAWriteIsRetriedWhenUnknownOutcomesAreRetried() {
+        properties.getPayments().getRetry().setRetryWhenOutcomeUnknown(true);
+        caller = newCaller();
+        for (int status : List.of(502, 504)) {
+            fineract.resetAll();
+            fineract.stubFor(post(PATH).willReturn(aResponse().withStatus(status).withBody("<html>gateway</html>")));
+
+            Exchange exchange = call(FineractEndpoint.PAYMENTS);
+
+            assertEquals(FineractCallOutcome.UNKNOWN, exchange.getProperty(FineractHttpCaller.CALL_OUTCOME));
+            assertNull(exchange.getMessage().getBody());
+            fineract.verify(3, postRequestedFor(urlEqualTo(PATH)));
+        }
+    }
+
+    @Test
+    void gatewayErrorOnAReadNotListedAsRetryableIsAnUnknownOutcomeAndIsRetried() {
+        properties.getVerification().getRetry().setRetryStatusCodes(List.of(503));
+        caller = newCaller();
+        fineract.stubFor(post(PATH).willReturn(aResponse().withStatus(504).withBody(NGINX_504_PAGE)));
+
+        Exchange exchange = call(FineractEndpoint.VERIFICATION);
+
+        assertEquals(FineractCallOutcome.UNKNOWN, exchange.getProperty(FineractHttpCaller.CALL_OUTCOME));
+        assertEquals("gateway_timeout:504", exchange.getProperty(FineractHttpCaller.CALL_FAILURE));
+        fineract.verify(3, postRequestedFor(urlEqualTo(PATH)));
+    }
+
+    @Test
+    void gatewayErrorIsStillAnUnknownOutcomeWhenWarningsAreNotLogged() {
+        ch.qos.logback.classic.Logger callerLogger = (ch.qos.logback.classic.Logger) LoggerFactory
+                .getLogger(FineractHttpCaller.class);
+        Level level = callerLogger.getLevel();
+        callerLogger.setLevel(Level.ERROR);
+        try {
+            fineract.stubFor(post(PATH).willReturn(aResponse().withStatus(502)));
+
+            Exchange exchange = call(FineractEndpoint.PAYMENTS);
+
+            assertEquals("bad_gateway:502", exchange.getProperty(FineractHttpCaller.CALL_FAILURE));
+            fineract.verify(1, postRequestedFor(urlEqualTo(PATH)));
+        } finally {
+            callerLogger.setLevel(level);
+        }
     }
 
     @Test

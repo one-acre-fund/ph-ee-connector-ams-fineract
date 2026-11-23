@@ -230,14 +230,16 @@ public class FineractHttpCaller {
             throw new FailedAttempt(FineractCallOutcome.RESPONDED, "status:" + status, true, true);
         }
         String gatewayError = GATEWAY_ERRORS.get(status);
-        if (gatewayError != null && !settings.getRetry().isRetryWhenOutcomeUnknown()) {
-            // A proxy did not get Fineract's answer, and Fineract may still act on the request: for a write
-            // this is the same as no answer at all, and must not be sent again or read as Fineract's response.
+        if (gatewayError != null) {
+            // A proxy did not get Fineract's answer, and Fineract may still act on the request: the same as no
+            // answer at all, never read as Fineract's response, and sent again only when the endpoint retries
+            // unknown outcomes (as for a read timeout, see classify).
             if (logger.isWarnEnabled()) {
                 logger.warn("event=fineract_gateway_error host={} status={} body={}", hostOf(target), status,
                         ConnectionUtils.truncate(exchange.getMessage().getBody(String.class)));
             }
-            throw new FailedAttempt(FineractCallOutcome.UNKNOWN, gatewayError + ":" + status, false, true);
+            throw new FailedAttempt(FineractCallOutcome.UNKNOWN, gatewayError + ":" + status,
+                    settings.getRetry().isRetryWhenOutcomeUnknown(), true);
         }
         if (status >= 500) {
             throw new FailedAttempt(FineractCallOutcome.RESPONDED, "status:" + status, false, true);
