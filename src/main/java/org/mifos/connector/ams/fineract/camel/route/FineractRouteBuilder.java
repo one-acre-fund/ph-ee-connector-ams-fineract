@@ -27,6 +27,7 @@ import org.mifos.connector.ams.fineract.data.FineractRequestDto;
 import org.mifos.connector.ams.fineract.resilience.FineractCallOutcome;
 import org.mifos.connector.ams.fineract.resilience.FineractEndpoint;
 import org.mifos.connector.ams.fineract.resilience.FineractHttpCaller;
+import org.mifos.connector.ams.fineract.util.ConnectionUtils;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -300,9 +301,12 @@ public class FineractRouteBuilder extends RouteBuilder {
                 .process(fineractHttpCaller.call(FineractEndpoint.PAYMENTS,
                         constant(fineractBaseUrl + validationAndConfirmationEndpoint + CALL_OPTIONS)))
                 .id("payments-call")
-                .log("Received Fineract validation & confirmation response for " + "transaction ${exchangeProperty."
-                        + EXTERNAL_ID
-                        + "} on ${header.Date} with status: ${header.CamelHttpResponseCode}. Body: \n ${body}")
+                .process(exchange -> log.info(
+                        "Received Fineract validation & confirmation response for transaction {} on {} with status: {}."
+                                + " Body: \n {}",
+                        exchange.getProperty(EXTERNAL_ID), exchange.getMessage().getHeader("Date"),
+                        exchange.getMessage().getHeader(Exchange.HTTP_RESPONSE_CODE),
+                        ConnectionUtils.truncate(exchange.getMessage().getBody(String.class))))
                 .setProperty(AMS_PAYMENT_RESPONSE).simple("${body}");
     }
 

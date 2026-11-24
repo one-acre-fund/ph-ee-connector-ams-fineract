@@ -2,19 +2,28 @@ package org.mifos.connector.ams.fineract.zeebe;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mifos.connector.ams.fineract.camel.config.CamelProperties.AMS_PAYMENT_RESPONSE;
+import static org.mifos.connector.ams.fineract.camel.config.CamelProperties.CHANNEL_REQUEST;
+import static org.mifos.connector.ams.fineract.zeebe.ZeebeVariables.ERROR_CODE;
 import static org.mifos.connector.ams.fineract.zeebe.ZeebeVariables.ERROR_DESCRIPTION;
 import static org.mifos.connector.ams.fineract.zeebe.ZeebeVariables.ERROR_INFORMATION;
+import static org.mifos.connector.ams.fineract.zeebe.ZeebeVariables.EXTERNAL_ID;
 import static org.mifos.connector.ams.fineract.zeebe.ZeebeVariables.FINERACT_AMS_ZEEBEE_SETTLEMENT_WORKER_NAME;
 import static org.mifos.connector.ams.fineract.zeebe.ZeebeVariables.FINERACT_AMS_ZEEBEE_VALIDATION_WORKER_NAME;
 import static org.mifos.connector.ams.fineract.zeebe.ZeebeVariables.PARTY_LOOKUP_FAILED;
+import static org.mifos.connector.ams.fineract.zeebe.ZeebeVariables.TRANSACTION_ID;
 import static org.mifos.connector.ams.fineract.zeebe.ZeebeVariables.TRANSFER_SETTLEMENT_FAILED;
 import static org.mifos.connector.ams.fineract.zeebe.ZeebeVariables.VALIDATION_AND_SETTLEMENT_WORKER_NAME;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -35,13 +44,18 @@ import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 import org.apache.camel.CamelContext;
+import org.apache.camel.Exchange;
 import org.apache.camel.ProducerTemplate;
 import org.apache.camel.impl.DefaultCamelContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mifos.connector.ams.fineract.data.ChannelRequest;
+import org.mifos.connector.ams.fineract.resilience.FineractCallOutcome;
+import org.mifos.connector.ams.fineract.resilience.FineractHttpCaller;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -53,6 +67,9 @@ class ZeebeWorkersTest {
     private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(30);
     private static final long JOB_KEY = 99L;
     private static final int WORKER_MAX_JOBS = 20;
+    private static final String CHANNEL_REQUEST_JSON = "{\"payer\":{\"partyIdInfo\":{\"partyIdType\":"
+            + "\"VIRTUAL_ACCOUNT_NUMBER\",\"partyIdentifier\":\"33321\"}},\"payee\":{\"partyIdInfo\":"
+            + "{\"partyIdType\":\"FINERACTACCOUNTID\",\"partyIdentifier\":\"1234\"}}}";
 
     @Mock
     private ZeebeClient zeebeClient;
@@ -170,6 +187,106 @@ class ZeebeWorkersTest {
         assertFalse((Boolean) variables.get(TRANSFER_SETTLEMENT_FAILED));
         assertEquals("AMS Local is disabled", variables.get(ERROR_INFORMATION));
         verify(completeFuture).join(30_000L, TimeUnit.MILLISECONDS);
+    }
+
+    @Test
+    void validationAndSettlementWorker_whenFineractAnswersWithAnHtmlErrorPage_completesTheJobAsFailed()
+            throws Exception {
+        Map<String, Object> variables = runValidationAndSettlement(500,
+                "<html><body><h1>500 Internal Server Error</h1></body></html>", true);
+
+        assertTrue((Boolean) variables.get(TRANSFER_SETTLEMENT_FAILED));
+        assertEquals(500, variables.get(ERROR_CODE));
+        assertEquals("<html><body><h1>500 Internal Server Error</h1></body></html>",
+                variables.get(AMS_PAYMENT_RESPONSE));
+        assertEquals(CHANNEL_REQUEST_JSON, variables.get(CHANNEL_REQUEST), "the channel request is left as it was");
+        verify(jobClient, never()).newFailCommand(anyLong());
+    }
+
+    @Test
+    void validationAndSettlementWorker_whenA200BodyIsNotJson_completesTheJobAsSettled() throws Exception {
+        Map<String, Object> variables = runValidationAndSettlement(200, "OK", false);
+
+        assertFalse((Boolean) variables.get(TRANSFER_SETTLEMENT_FAILED));
+        assertEquals("OK", variables.get(AMS_PAYMENT_RESPONSE));
+        assertEquals(CHANNEL_REQUEST_JSON, variables.get(CHANNEL_REQUEST));
+        verify(jobClient, never()).newFailCommand(anyLong());
+    }
+
+    @Test
+    void validationAndSettlementWorker_whenFineractReturnsTheAccountNumber_setsItOnThePayee() throws Exception {
+        Map<String, Object> variables = runValidationAndSettlement(200,
+                "{\"status\":200,\"message\":\"ok\",\"accountNumber\":\"000123\"}", false);
+
+        assertFalse((Boolean) variables.get(TRANSFER_SETTLEMENT_FAILED));
+        ChannelRequest channelRequest = new ObjectMapper().readValue((String) variables.get(CHANNEL_REQUEST),
+                ChannelRequest.class);
+        assertEquals("000123", channelRequest.getPayee().getPartyIdInfo().getPartyIdentifier());
+    }
+
+    @Test
+    void validationAndSettlementWorker_whenFineractDidNotAnswer_completesTheJobWithTheRouteError() throws Exception {
+        Map<String, Object> variables = runValidationAndSettlement(exchange -> {
+            exchange.setProperty(FineractHttpCaller.CALL_OUTCOME, FineractCallOutcome.UNKNOWN);
+            exchange.setProperty(TRANSFER_SETTLEMENT_FAILED, true);
+            exchange.setProperty(ERROR_CODE, "UNKNOWN_OUTCOME");
+            exchange.setProperty(ERROR_INFORMATION, "no response came back: gateway_timeout:504");
+        });
+
+        assertTrue((Boolean) variables.get(TRANSFER_SETTLEMENT_FAILED));
+        assertEquals("UNKNOWN_OUTCOME", variables.get(ERROR_CODE));
+        assertEquals("no response came back: gateway_timeout:504", variables.get(ERROR_INFORMATION));
+        assertNull(variables.get(AMS_PAYMENT_RESPONSE));
+        assertEquals(CHANNEL_REQUEST_JSON, variables.get(CHANNEL_REQUEST));
+        verify(jobClient, never()).newFailCommand(anyLong());
+    }
+
+    @Test
+    void validationAndSettlementWorker_whenTheResponseBodyIsBlank_completesTheJobWithoutParsing() throws Exception {
+        Map<String, Object> variables = runValidationAndSettlement(200, "  ", false);
+
+        assertFalse((Boolean) variables.get(TRANSFER_SETTLEMENT_FAILED));
+        assertEquals(CHANNEL_REQUEST_JSON, variables.get(CHANNEL_REQUEST));
+        verify(jobClient, never()).newFailCommand(anyLong());
+    }
+
+    private Map<String, Object> runValidationAndSettlement(int status, String body, boolean failed) throws Exception {
+        return runValidationAndSettlement(exchange -> {
+            exchange.setProperty(FineractHttpCaller.CALL_OUTCOME, FineractCallOutcome.RESPONDED);
+            exchange.setProperty(TRANSFER_SETTLEMENT_FAILED, failed);
+            exchange.setProperty(AMS_PAYMENT_RESPONSE, body);
+            exchange.getMessage().setHeader(Exchange.HTTP_RESPONSE_CODE, status);
+            exchange.getMessage().setBody(body);
+        });
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> runValidationAndSettlement(Consumer<Exchange> route) throws Exception {
+        stubWorkerRegistration();
+        stubSuccessfulComplete();
+        stubJobMetadata(VALIDATION_AND_SETTLEMENT_WORKER_NAME);
+        Map<String, Object> jobVariables = new HashMap<>();
+        jobVariables.put(CHANNEL_REQUEST, CHANNEL_REQUEST_JSON);
+        jobVariables.put(TRANSACTION_ID, "txn-1");
+        jobVariables.put(EXTERNAL_ID, "RKTQDM7W6S");
+        when(job.getVariablesAsMap()).thenReturn(jobVariables);
+        when(job.getDeadline()).thenReturn(Long.MAX_VALUE);
+        // stands in for the route
+        doAnswer(invocation -> {
+            Exchange exchange = invocation.getArgument(1);
+            exchange.setProperty(CHANNEL_REQUEST,
+                    new ObjectMapper().readValue(CHANNEL_REQUEST_JSON, ChannelRequest.class));
+            route.accept(exchange);
+            return exchange;
+        }).when(producerTemplate).send(eq("direct:transfer-validation-and-settlement-base"), any(Exchange.class));
+
+        ZeebeWorkers workers = newWorkers(true);
+        workers.setupWorkers();
+        handlersByJobType.get(VALIDATION_AND_SETTLEMENT_WORKER_NAME).handle(jobClient, job);
+
+        ArgumentCaptor<Map<String, Object>> variablesCaptor = ArgumentCaptor.forClass(Map.class);
+        verify(completeCommand).variables(variablesCaptor.capture());
+        return variablesCaptor.getValue();
     }
 
     private ZeebeWorkers newWorkers(boolean amsLocalEnabled) {

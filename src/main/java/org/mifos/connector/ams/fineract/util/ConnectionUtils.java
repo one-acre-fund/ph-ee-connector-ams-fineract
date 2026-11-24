@@ -10,7 +10,24 @@ import org.json.JSONObject;
 @Slf4j
 public class ConnectionUtils {
 
+    /** Longest response body written to a log line. */
+    public static final int MAX_LOGGED_BODY_LENGTH = 1000;
+
     private ConnectionUtils() {}
+
+    /**
+     * Shortens a response body for a log line: an nginx error page or a large payload would otherwise flood the logs.
+     *
+     * @param body
+     *            the body, may be null
+     * @return the body, cut to {@link #MAX_LOGGED_BODY_LENGTH} characters with a marker saying how long it was
+     */
+    public static String truncate(String body) {
+        if (body == null || body.length() <= MAX_LOGGED_BODY_LENGTH) {
+            return body;
+        }
+        return body.substring(0, MAX_LOGGED_BODY_LENGTH) + "...[truncated, " + body.length() + " chars]";
+    }
 
     /**
      * Parse the error description from the JSON.

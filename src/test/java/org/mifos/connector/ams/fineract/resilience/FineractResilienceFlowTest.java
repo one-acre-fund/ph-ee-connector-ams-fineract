@@ -167,17 +167,55 @@ class FineractResilienceFlowTest extends FineractConnectorApplicationSetUp {
     @Test
     void slowPaymentsCallFailsAsUnknownAndLeavesNoResponseToParse() {
         FINERACT.stubFor(post(PAYMENTS_PATH).willReturn(aResponse().withStatus(200).withFixedDelay(600)));
-        Exchange exchange = new DefaultExchange(camelContext);
-        exchange.setProperty(CHANNEL_REQUEST, virtualAccountChannelRequest());
-        exchange.setProperty(TRANSACTION_ID, "txn-1");
-        exchange.setProperty(EXTERNAL_ID, "RKTQDM7W6S");
-        exchange.setProperty(FineractHttpCaller.JOB_DEADLINE, Long.MAX_VALUE);
 
-        producerTemplate.send("direct:transfer-validation-and-settlement-base", exchange);
+        Exchange exchange = validateAndSettle();
 
         assertTrue(exchange.getProperty(TRANSFER_SETTLEMENT_FAILED, Boolean.class));
         assertEquals("UNKNOWN_OUTCOME", exchange.getProperty(ERROR_CODE));
         assertNull(exchange.getProperty("amsPaymentResponse"));
+        FINERACT.verify(1, postRequestedFor(urlEqualTo(PAYMENTS_PATH)));
+    }
+
+    @Test
+    void paymentsGatewayTimeoutFailsAsUnknownAndLeavesNoResponseToParse() {
+        FINERACT.stubFor(
+                post(PAYMENTS_PATH).willReturn(aResponse().withStatus(504).withHeader("Content-Type", "text/html")
+                        .withBody("<html><body><h1>504 Gateway Time-out</h1>" + "</body></html>")));
+
+        Exchange exchange = validateAndSettle();
+
+        assertTrue(exchange.getProperty(TRANSFER_SETTLEMENT_FAILED, Boolean.class));
+        assertEquals("UNKNOWN_OUTCOME", exchange.getProperty(ERROR_CODE));
+        assertTrue(exchange.getProperty(ERROR_INFORMATION, String.class).contains("gateway_timeout:504"));
+        assertNull(exchange.getProperty("amsPaymentResponse"));
+        FINERACT.verify(1, postRequestedFor(urlEqualTo(PAYMENTS_PATH)));
+    }
+
+    @Test
+    void paymentsBadGatewayFailsAsUnknownAndLeavesNoResponseToParse() {
+        FINERACT.stubFor(post(PAYMENTS_PATH).willReturn(aResponse().withStatus(502)
+                .withHeader("Content-Type", "text/html").withBody("<html>502 Bad Gateway</html>")));
+
+        Exchange exchange = validateAndSettle();
+
+        assertTrue(exchange.getProperty(TRANSFER_SETTLEMENT_FAILED, Boolean.class));
+        assertEquals("UNKNOWN_OUTCOME", exchange.getProperty(ERROR_CODE));
+        assertTrue(exchange.getProperty(ERROR_INFORMATION, String.class).contains("bad_gateway:502"));
+        assertNull(exchange.getProperty("amsPaymentResponse"));
+        FINERACT.verify(1, postRequestedFor(urlEqualTo(PAYMENTS_PATH)));
+    }
+
+    @Test
+    void paymentsServerErrorWithAnHtmlBodyFailsSettlementWithoutRetrying() {
+        FINERACT.stubFor(post(PAYMENTS_PATH).willReturn(aResponse().withStatus(500)
+                .withHeader("Content-Type", "text/html").withBody("<html>500 Internal Server Error</html>")));
+
+        Exchange exchange = validateAndSettle();
+
+        assertTrue(exchange.getProperty(TRANSFER_SETTLEMENT_FAILED, Boolean.class));
+        assertNull(exchange.getProperty(ERROR_CODE), "the HTTP status stays the error code");
+        assertEquals(500, exchange.getMessage().getHeader(Exchange.HTTP_RESPONSE_CODE));
+        assertEquals("<html>500 Internal Server Error</html>", exchange.getProperty("amsPaymentResponse"));
         FINERACT.verify(1, postRequestedFor(urlEqualTo(PAYMENTS_PATH)));
     }
 
@@ -213,6 +251,16 @@ class FineractResilienceFlowTest extends FineractConnectorApplicationSetUp {
         exchange.setProperty(TRANSACTION_FAILED, false);
         exchange.setProperty(FineractHttpCaller.JOB_DEADLINE, jobDeadline);
         producerTemplate.send("direct:transfer-settlement-base", exchange);
+        return exchange;
+    }
+
+    private Exchange validateAndSettle() {
+        Exchange exchange = new DefaultExchange(camelContext);
+        exchange.setProperty(CHANNEL_REQUEST, virtualAccountChannelRequest());
+        exchange.setProperty(TRANSACTION_ID, "txn-1");
+        exchange.setProperty(EXTERNAL_ID, "RKTQDM7W6S");
+        exchange.setProperty(FineractHttpCaller.JOB_DEADLINE, Long.MAX_VALUE);
+        producerTemplate.send("direct:transfer-validation-and-settlement-base", exchange);
         return exchange;
     }
 

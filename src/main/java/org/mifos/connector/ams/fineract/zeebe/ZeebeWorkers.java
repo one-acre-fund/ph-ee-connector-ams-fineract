@@ -17,6 +17,7 @@ import static org.mifos.connector.ams.fineract.zeebe.ZeebeVariables.TRANSACTION_
 import static org.mifos.connector.ams.fineract.zeebe.ZeebeVariables.TRANSFER_SETTLEMENT_FAILED;
 import static org.mifos.connector.ams.fineract.zeebe.ZeebeVariables.VALIDATION_AND_SETTLEMENT_WORKER_NAME;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.camunda.zeebe.client.ZeebeClient;
 import io.camunda.zeebe.client.api.response.ActivatedJob;
@@ -152,10 +153,7 @@ public class ZeebeWorkers {
                         producerTemplate.send("direct:transfer-validation-and-settlement-base", ex);
                         checkOperationResultAndSetVariables(TRANSFER_SETTLEMENT_FAILED, ex, variables);
                         String amsResponse = ex.getProperty(AMS_PAYMENT_RESPONSE, String.class);
-                        // No response (connection failed, circuit open, timeout) leaves nothing to parse; the step is
-                        // already failed and the job must still complete, not fail and be re-offered.
-                        FineractPaymentResponse paymentResponse = amsResponse == null || amsResponse.isBlank() ? null
-                                : mapper.readValue(amsResponse, FineractPaymentResponse.class);
+                        FineractPaymentResponse paymentResponse = parsePaymentResponse(amsResponse, ex);
                         if (paymentResponse != null && paymentResponse.accountNumber() != null) {
                             ChannelRequest channelRequest = ex.getProperty(CHANNEL_REQUEST, ChannelRequest.class);
                             channelRequest.getPayee().getPartyIdInfo()
@@ -169,6 +167,32 @@ public class ZeebeWorkers {
 
                     ZeebeCommandHelper.completeJob(client, job, variables, requestTimeout, log);
                 })).name(VALIDATION_AND_SETTLEMENT_WORKER_NAME).maxJobsActive(workerMaxJobs).open());
+    }
+
+    /**
+     * Reads the payments response. No response (connection failed, circuit open, timeout) or one that is not the JSON
+     * Fineract sends (an nginx error page, say) gives null: the route has already marked the step failed when the
+     * status was not 200, and the job must still complete. Throwing here would fail the job, and Zeebe would offer it
+     * again at once and post the payment to Fineract again.
+     *
+     * @param amsResponse
+     *            the response body, may be null
+     * @param ex
+     *            the exchange the call was made with
+     * @return the parsed response, or null
+     */
+    private FineractPaymentResponse parsePaymentResponse(String amsResponse, Exchange ex) {
+        if (amsResponse == null || amsResponse.isBlank()) {
+            return null;
+        }
+        try {
+            return mapper.readValue(amsResponse, FineractPaymentResponse.class);
+        } catch (JsonProcessingException e) {
+            log.warn("event=fineract_payment_response_unparseable transaction={} status={} error={} body={}",
+                    ex.getProperty(EXTERNAL_ID), ex.getMessage().getHeader(Exchange.HTTP_RESPONSE_CODE),
+                    e.getOriginalMessage(), ConnectionUtils.truncate(amsResponse));
+            return null;
+        }
     }
 
     private void logWorkerDetails(ActivatedJob job) {

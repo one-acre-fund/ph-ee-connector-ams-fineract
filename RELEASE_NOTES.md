@@ -1,5 +1,9 @@
 # Release Notes
 
+## Version 0.3.1
+    * Resilience
+        * [FD-1976] - A 502 or 504 from the gateway on a settlement write fails as `UNKNOWN_OUTCOME`, and a non-JSON payments response (nginx error page) no longer fails the Zeebe job and gets the payment posted again; response bodies in logs are truncated
+
 ## Version 0.3.0
     * Resilience
         * [FD-1935] - Timeouts, safe retries and a circuit breaker on every Fineract call; retries stay within the Zeebe job deadline and a settlement that got no answer is never posted again
