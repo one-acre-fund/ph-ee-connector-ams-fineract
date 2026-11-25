@@ -15,5 +15,6 @@ COPY --from=build /ph-ee-connector-ams-fineract/config/elastic/elastic-apm-agent
 WORKDIR /app
 
 EXPOSE 5000
+EXPOSE 5004
 
 ENTRYPOINT ["java", "-jar", "/app/ph-ee-connector-ams-fineract.jar"]
